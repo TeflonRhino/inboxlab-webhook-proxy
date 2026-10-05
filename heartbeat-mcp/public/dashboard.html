@@ -3,144 +3,203 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#111827">
+<meta name="theme-color" content="#0f172a">
 <title>InboxLab Command Centre</title>
 <style>
-:root{--bg:#f5f5f4;--panel:#fff;--ink:#171717;--muted:#737373;--line:#e7e5e4;--soft:#fafaf9;--dark:#1c1917;--green:#166534;--greenbg:#f0fdf4;--amber:#92400e;--amberbg:#fffbeb;--red:#991b1b;--redbg:#fef2f2;--blue:#1d4ed8;--bluebg:#eff6ff;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ink);background:var(--bg)}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink)}button,input,textarea,select{font:inherit}button{cursor:pointer}.app{min-height:100vh;display:grid;grid-template-columns:238px minmax(0,1fr)}
-.sidebar{background:#111827;color:#e5e7eb;padding:22px 14px;display:flex;flex-direction:column;gap:18px}.brand{padding:0 10px}.brand b{font-size:15px;letter-spacing:.08em;text-transform:uppercase}.brand div{font-size:12px;color:#9ca3af;margin-top:4px}.nav{display:grid;gap:5px}.nav button{border:0;background:transparent;color:#d1d5db;text-align:left;border-radius:10px;padding:10px 11px;display:flex;align-items:center;gap:10px;font-size:14px}.nav button.active,.nav button:hover{background:#1f2937;color:#fff}.nav .count{margin-left:auto;font-size:11px;background:#374151;padding:2px 7px;border-radius:999px}.spacer{flex:1}.logout{border:1px solid #374151;background:#111827;color:#d1d5db;border-radius:10px;padding:9px 11px;width:100%}
-.main{min-width:0;padding:28px}.top{display:flex;align-items:flex-start;gap:16px;justify-content:space-between;margin-bottom:24px}.eyebrow{font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#78716c}.h1{font-size:30px;line-height:1.1;font-weight:850;margin:5px 0}.sub{font-size:14px;color:var(--muted)}.refresh{border:1px solid var(--line);background:white;border-radius:11px;padding:9px 12px;font-weight:700}
-.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.stat{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px}.stat .label{font-size:12px;color:var(--muted);font-weight:700}.stat .value{font-size:28px;font-weight:850;margin-top:4px}.stat .hint{font-size:12px;color:#a3a3a3;margin-top:3px}
-.section{margin-top:22px}.section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}.section-head h2{font-size:16px;margin:0}.pill{font-size:11px;font-weight:800;padding:5px 8px;border-radius:999px;background:#e7e5e4;color:#57534e}.pill.hold{background:var(--amberbg);color:var(--amber)}.pill.approved{background:var(--bluebg);color:var(--blue)}.pill.posted{background:var(--greenbg);color:var(--green)}.pill.skipped{background:#f5f5f5;color:#737373}
-.card{background:white;border:1px solid var(--line);border-radius:16px;padding:16px}.queue{display:grid;gap:10px}.queue-card{background:white;border:1px solid var(--line);border-radius:16px;padding:16px}.qtop{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.client{font-weight:820;font-size:16px}.meta{font-size:12px;color:var(--muted);margin-top:3px}.draft{margin-top:13px;width:100%;min-height:88px;resize:vertical;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--soft);line-height:1.45;color:var(--ink)}.draft:focus{outline:none;border-color:#a8a29e;box-shadow:0 0 0 3px rgba(120,113,108,.10)}.reason{font-size:12px;color:var(--muted);margin-top:8px}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.btn{border:1px solid var(--line);background:white;border-radius:10px;padding:8px 11px;font-size:13px;font-weight:750}.btn.primary{background:var(--dark);border-color:var(--dark);color:white}.btn.approve{background:var(--bluebg);border-color:#bfdbfe;color:var(--blue)}.btn.danger{background:var(--redbg);border-color:#fecaca;color:var(--red)}.btn:disabled{opacity:.45;cursor:not-allowed}
-.placeholder{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.empty{border:1px dashed #d6d3d1;background:rgba(255,255,255,.55);border-radius:16px;padding:18px}.empty b{display:block;font-size:14px}.empty span{display:block;font-size:12px;color:var(--muted);line-height:1.5;margin-top:5px}.statusline{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}.dot{width:8px;height:8px;border-radius:50%;background:#22c55e}.notice{margin-top:12px;background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;border-radius:13px;padding:12px 14px;font-size:13px;line-height:1.5}.toast{position:fixed;right:18px;bottom:18px;background:#171717;color:#fff;border-radius:12px;padding:11px 14px;font-size:13px;box-shadow:0 12px 35px rgba(0,0,0,.2);opacity:0;pointer-events:none;transform:translateY(8px);transition:.2s}.toast.show{opacity:1;transform:none}.hidden{display:none!important}
-@media(max-width:900px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.app{grid-template-columns:86px minmax(0,1fr)}.sidebar{padding:18px 10px}.brand b{font-size:11px}.brand div{display:none}.nav button{font-size:0;justify-content:center;padding:12px}.nav button span:first-child{font-size:18px}.nav .count{display:none}.main{padding:22px}}
-@media(max-width:620px){.app{display:block}.sidebar{position:sticky;top:0;z-index:20;display:flex;flex-direction:row;align-items:center;padding:10px;background:#111827;overflow-x:auto}.brand{min-width:max-content;padding:0 4px}.nav{display:flex;gap:4px}.nav button{min-width:44px;padding:9px}.spacer,.logout{display:none}.main{padding:18px 14px 32px}.h1{font-size:25px}.top{align-items:center}.sub{display:none}.grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.stat{padding:13px}.stat .value{font-size:24px}.placeholder{grid-template-columns:1fr}.qtop{align-items:center}.actions .btn{flex:1}.refresh{padding:8px 10px}}
+:root{
+  --bg:#f4f5f7;--panel:#fff;--ink:#111827;--muted:#6b7280;--line:#e5e7eb;--soft:#f9fafb;--nav:#0f172a;
+  --amber:#92400e;--amberbg:#fffbeb;--red:#991b1b;--redbg:#fef2f2;--blue:#1d4ed8;--bluebg:#eff6ff;
+  --green:#166534;--greenbg:#f0fdf4;--purple:#6d28d9;--purplebg:#f5f3ff;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
+}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--ink)}button,input,textarea,select{font:inherit}button{cursor:pointer}
+.app{min-height:100vh;display:grid;grid-template-columns:232px minmax(0,1fr)}.sidebar{background:var(--nav);color:#e5e7eb;padding:20px 13px;display:flex;flex-direction:column;gap:16px}
+.brand{padding:2px 10px 8px}.brand b{display:block;font-size:14px;letter-spacing:.1em;text-transform:uppercase}.brand small{color:#94a3b8;font-size:12px}
+.nav{display:grid;gap:4px}.nav button{border:0;background:transparent;color:#cbd5e1;text-align:left;border-radius:10px;padding:10px 11px;display:flex;align-items:center;gap:9px;font-size:13px}
+.nav button.active,.nav button:hover{background:#1e293b;color:#fff}.nav .badge{margin-left:auto;background:#334155;border-radius:999px;padding:2px 7px;font-size:10px}.spacer{flex:1}
+.side-note{border:1px solid #334155;border-radius:12px;padding:10px;color:#94a3b8;font-size:11px;line-height:1.45}.logout{width:100%;border:1px solid #334155;background:transparent;color:#cbd5e1;border-radius:10px;padding:9px 10px}
+.main{min-width:0;padding:28px;max-width:1440px;width:100%;margin:auto}.top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px}.eyebrow{font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#6b7280}
+.h1{font-size:30px;font-weight:850;margin:4px 0 5px;line-height:1.12}.sub{font-size:13px;color:var(--muted)}.top-actions{display:flex;gap:8px}.btn{border:1px solid var(--line);background:#fff;border-radius:10px;padding:8px 11px;font-size:12px;font-weight:760;color:var(--ink)}
+.btn.primary{background:#111827;border-color:#111827;color:#fff}.btn.blue{background:var(--bluebg);color:var(--blue);border-color:#bfdbfe}.btn.red{background:var(--redbg);color:var(--red);border-color:#fecaca}.btn:disabled{opacity:.45;cursor:not-allowed}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.stat{background:#fff;border:1px solid var(--line);border-radius:15px;padding:14px}.stat-top{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.stat .label{font-size:11px;font-weight:750;color:#6b7280}.stat .value{font-size:27px;font-weight:850;margin-top:5px}.stat .hint{font-size:11px;color:#9ca3af;margin-top:2px}
+.dot{width:7px;height:7px;border-radius:50%;background:#22c55e;display:inline-block}.section{margin-top:20px}.section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}.section-head h2{font-size:15px;margin:0}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:820;background:#f3f4f6;color:#4b5563}.pill.hold{background:var(--amberbg);color:var(--amber)}.pill.approved{background:var(--bluebg);color:var(--blue)}.pill.posted{background:var(--greenbg);color:var(--green)}.pill.skipped{background:#f3f4f6;color:#6b7280}
+.workspace{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);gap:12px}.panel{background:#fff;border:1px solid var(--line);border-radius:16px;padding:15px;min-width:0}
+.queue,.stack{display:grid;gap:9px}.queue-card,.item-card{border:1px solid var(--line);border-radius:14px;padding:13px;background:#fff}.qtop,.itop{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.client{font-size:14px;font-weight:820}.meta{font-size:11px;color:var(--muted);margin-top:3px}
+.preview{font-size:13px;line-height:1.5;margin-top:10px;color:#374151}.draft{width:100%;margin-top:10px;min-height:95px;resize:vertical;border:1px solid var(--line);background:var(--soft);border-radius:11px;padding:10px;line-height:1.45;color:var(--ink)}
+.draft:focus{outline:none;border-color:#94a3b8;box-shadow:0 0 0 3px rgba(148,163,184,.18)}.reason{font-size:11px;color:#6b7280;margin-top:7px}.actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.priority{font-size:9px;font-weight:850;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:4px 7px}.priority.URGENT{background:var(--redbg);color:var(--red)}.priority.HIGH{background:var(--amberbg);color:var(--amber)}.priority.NORMAL{background:var(--bluebg);color:var(--blue)}.priority.LOW{background:#f3f4f6;color:#6b7280}
+.item-title{font-size:13px;font-weight:800}.item-summary{font-size:12px;line-height:1.45;color:#4b5563;margin-top:7px}.item-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:9px;color:#9ca3af;font-size:10px}
+.activity{display:grid}.activity-row{display:grid;grid-template-columns:24px minmax(0,1fr);gap:9px;padding:10px 0;border-bottom:1px solid #f3f4f6}.activity-row:last-child{border-bottom:0}.activity-icon{width:24px;height:24px;border-radius:8px;background:#f3f4f6;display:grid;place-items:center;font-size:11px}.activity-title{font-size:12px;font-weight:760}.activity-detail{font-size:11px;color:#6b7280;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.activity-time{font-size:10px;color:#9ca3af;margin-top:3px}
+.attention-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.lane{background:#fff;border:1px solid var(--line);border-radius:15px;padding:12px;min-width:0}.lane-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px}.lane-title{font-size:12px;font-weight:850}.lane-count{font-size:10px;color:#6b7280}
+.empty{border:1px dashed #d1d5db;background:rgba(255,255,255,.7);border-radius:14px;padding:16px;color:#6b7280;font-size:12px;line-height:1.5}.empty b{display:block;color:#374151;margin-bottom:3px}
+.notice{border:1px solid #dbeafe;background:#eff6ff;color:#1e40af;border-radius:13px;padding:11px 13px;font-size:12px;line-height:1.5;margin-top:10px}
+.select{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 9px;font-size:12px}.hidden{display:none!important}.toast{position:fixed;right:16px;bottom:16px;background:#111827;color:#fff;border-radius:11px;padding:10px 13px;font-size:12px;box-shadow:0 15px 35px rgba(0,0,0,.22);opacity:0;transform:translateY(8px);pointer-events:none;transition:.2s}.toast.show{opacity:1;transform:none}
+@media(max-width:1050px){.workspace{grid-template-columns:1fr}.attention-grid{grid-template-columns:1fr 1fr}.stats{grid-template-columns:1fr 1fr}.app{grid-template-columns:82px minmax(0,1fr)}.sidebar{padding:16px 9px}.brand b{font-size:10px}.brand small,.side-note{display:none}.nav button{font-size:0;justify-content:center;padding:12px}.nav button span:first-child{font-size:17px}.nav .badge{display:none}.main{padding:22px}}
+@media(max-width:640px){.app{display:block}.sidebar{position:sticky;top:0;z-index:10;display:flex;flex-direction:row;align-items:center;gap:7px;padding:9px 10px;overflow-x:auto}.brand{min-width:max-content;padding:0 4px}.brand small{display:none}.nav{display:flex;gap:3px}.nav button{min-width:42px;padding:9px}.spacer,.logout{display:none}.main{padding:16px 12px 28px}.top{align-items:center}.h1{font-size:24px}.sub{display:none}.stats{grid-template-columns:1fr 1fr}.stat{padding:12px}.stat .value{font-size:23px}.attention-grid{grid-template-columns:1fr}.top-actions .btn{padding:8px 9px}.workspace{gap:10px}.actions .btn{flex:1}}
 </style>
 </head>
 <body>
 <div class="app">
 <aside class="sidebar">
-  <div class="brand"><b>InboxLab</b><div>Command Centre</div></div>
+  <div class="brand"><b>InboxLab</b><small>Command Centre</small></div>
   <nav class="nav" id="nav">
-    <button class="active" data-view="today"><span>⌂</span> Today</button>
-    <button data-view="hold"><span>💬</span> Hold Queue <span class="count" id="navHold">0</span></button>
-    <button data-view="clients"><span>◎</span> Client Attention</button>
-    <button data-view="collections"><span>£</span> Collections</button>
-    <button data-view="refunds"><span>↩</span> Refunds</button>
-    <button data-view="calls"><span>◷</span> Calls</button>
-    <button data-view="followups"><span>✓</span> Follow-ups</button>
-    <button data-view="activity"><span>≡</span> Activity</button>
+    <button class="active" data-view="today"><span>⌂</span>Today</button>
+    <button data-view="hold"><span>💬</span>Hold Queue<span class="badge" id="navHold">0</span></button>
+    <button data-view="clients"><span>◎</span>Client Attention<span class="badge" id="navAttention">0</span></button>
+    <button data-view="collections"><span>£</span>Collections</button>
+    <button data-view="refunds"><span>↩</span>Refunds</button>
+    <button data-view="calls"><span>◷</span>Calls</button>
+    <button data-view="followups"><span>✓</span>Follow-ups</button>
+    <button data-view="activity"><span>≡</span>Activity</button>
   </nav>
   <div class="spacer"></div>
+  <div class="side-note"><span class="dot"></span> ChatGPT is the connected brain. This site only stores the visual outputs and approvals.</div>
   <form method="post" action="/dashboard/logout"><button class="logout">Sign out</button></form>
 </aside>
 <main class="main">
-  <header class="top"><div><div class="eyebrow">Dave + ChatGPT workspace</div><div class="h1" id="viewTitle">Today</div><div class="sub" id="viewSub">The things worth looking at first — not another system to maintain.</div></div><button class="refresh" id="refresh">↻ Refresh</button></header>
+<header class="top">
+  <div><div class="eyebrow">Dave + ChatGPT workspace</div><div class="h1" id="viewTitle">Today</div><div class="sub" id="viewSub">Your shortest useful view of what needs attention.</div></div>
+  <div class="top-actions"><button class="btn" id="refresh">↻ Refresh</button></div>
+</header>
 
-  <section id="view-today">
-    <div class="grid">
-      <div class="stat"><div class="label">Replies waiting</div><div class="value" id="holdCount">—</div><div class="hint">Heartbeat Hold Queue</div></div>
-      <div class="stat"><div class="label">Client attention</div><div class="value">—</div><div class="hint">Fed by ChatGPT</div></div>
-      <div class="stat"><div class="label">Collections</div><div class="value">—</div><div class="hint">Fed by ChatGPT</div></div>
-      <div class="stat"><div class="label">Calls today</div><div class="value">—</div><div class="hint">Fed by ChatGPT</div></div>
+<section id="view-today">
+  <div class="stats">
+    <div class="stat"><div class="stat-top"><div class="label">Replies waiting</div><span class="dot"></span></div><div class="value" id="statHold">—</div><div class="hint">Heartbeat drafts in HOLD</div></div>
+    <div class="stat"><div class="label">Needs attention</div><div class="value" id="statAttention">—</div><div class="hint">Clients surfaced by ChatGPT</div></div>
+    <div class="stat"><div class="label">Collections</div><div class="value" id="statCollections">—</div><div class="hint">Open revenue actions</div></div>
+    <div class="stat"><div class="label">Open follow-ups</div><div class="value" id="statFollowups">—</div><div class="hint">Things not to rely on memory for</div></div>
+  </div>
+  <div class="notice"><b>Visual layer only.</b> Slack, Calendar, Close, Heartbeat, Fathom and Airtable stay connected to ChatGPT. I surface only the useful operational output here.</div>
+  <div class="workspace section">
+    <div>
+      <div class="section-head"><h2>Do these first</h2><span class="pill hold" id="todayBadge">Loading</span></div>
+      <div class="stack" id="todayPriority"></div>
+      <div class="section" style="margin-top:14px"><div class="section-head"><h2>Heartbeat drafts</h2><button class="btn" data-jump="hold">Open Hold Queue</button></div><div class="queue" id="todayQueue"></div></div>
     </div>
-    <div class="notice"><b>How this works:</b> ChatGPT remains the connected brain for Slack, Calendar, Close, Heartbeat, Fathom, Airtable and the rest. This dashboard is the visual layer where useful outputs are surfaced.</div>
-    <div class="section"><div class="section-head"><h2>Waiting for you</h2><span class="pill hold" id="todayPill">Loading</span></div><div class="queue" id="todayQueue"></div></div>
-    <div class="section"><div class="section-head"><h2>Coming into this view next</h2><span class="pill">ChatGPT-fed</span></div><div class="placeholder">
-      <div class="empty"><b>Client attention</b><span>People who need a reply, check-in, intervention or decision after I review your connected systems.</span></div>
-      <div class="empty"><b>Money opportunities</b><span>Collections, failed payments and other revenue actions I surface from your work context.</span></div>
-      <div class="empty"><b>Calls & promises</b><span>Upcoming calendar calls plus things you agreed to do after Fathom meetings.</span></div>
-      <div class="empty"><b>Refunds & escalations</b><span>Cases that need context, a conversation or a decision — without you hunting across apps.</span></div>
-    </div></div>
-  </section>
+    <div class="panel">
+      <div class="section-head"><h2>Recent activity</h2><button class="btn" data-jump="activity">View all</button></div>
+      <div class="activity" id="todayActivity"></div>
+    </div>
+  </div>
+</section>
 
-  <section id="view-hold" class="hidden"><div class="section-head"><h2>Heartbeat reply drafts</h2><select id="queueFilter"><option>HOLD</option><option>APPROVED</option><option>POSTED</option><option>SKIPPED</option><option value="">ALL</option></select></div><div class="queue" id="holdQueue"></div></section>
+<section id="view-hold" class="hidden">
+  <div class="section-head"><h2>Heartbeat reply drafts</h2><select class="select" id="queueFilter"><option>HOLD</option><option>APPROVED</option><option>POSTED</option><option>SKIPPED</option><option value="">ALL</option></select></div>
+  <div class="queue" id="holdQueue"></div>
+</section>
 
-  <section id="view-clients" class="hidden"><div class="empty"><b>Client Attention</b><span>This will be populated by me after I review Heartbeat, Slack, Airtable, Fathom and other connected context. The dashboard itself will not duplicate those integrations.</span></div></section>
-  <section id="view-collections" class="hidden"><div class="empty"><b>Collections</b><span>Visual queue for collectible revenue, next actions and progress. Data will be surfaced here by ChatGPT from your connected work systems.</span></div></section>
-  <section id="view-refunds" class="hidden"><div class="empty"><b>Refunds</b><span>Open refund cases, context, next conversations and decision status will live here visually.</span></div></section>
-  <section id="view-calls" class="hidden"><div class="empty"><b>Calls</b><span>A visual view of upcoming calls and useful prep, generated from your connected calendar and meeting context.</span></div></section>
-  <section id="view-followups" class="hidden"><div class="empty"><b>Follow-ups</b><span>Your promises, client next steps and proactive check-ins will be surfaced here so they are not relying on memory.</span></div></section>
-  <section id="view-activity" class="hidden"><div class="empty"><b>Activity Log</b><span>Next iteration: a clear audit trail of drafts created, edits, approvals, posts and dashboard updates.</span></div></section>
+<section id="view-clients" class="hidden">
+  <div class="section-head"><h2>Client Attention</h2><span class="pill">ChatGPT-fed</span></div>
+  <div class="attention-grid" id="clientBoard"></div>
+</section>
+
+<section id="view-collections" class="hidden"><div class="section-head"><h2>Collections</h2><span class="pill">Open actions</span></div><div class="stack" id="collectionList"></div></section>
+<section id="view-refunds" class="hidden"><div class="section-head"><h2>Refunds</h2><span class="pill">Open cases</span></div><div class="stack" id="refundList"></div></section>
+<section id="view-calls" class="hidden"><div class="section-head"><h2>Calls</h2><span class="pill">Surfaced by ChatGPT</span></div><div class="stack" id="callList"></div></section>
+<section id="view-followups" class="hidden"><div class="section-head"><h2>Follow-ups</h2><span class="pill">Open</span></div><div class="stack" id="followupList"></div></section>
+<section id="view-activity" class="hidden"><div class="section-head"><h2>Activity Log</h2><span class="pill">Audit trail</span></div><div class="panel"><div class="activity" id="activityList"></div></div></section>
 </main>
 </div>
 <div class="toast" id="toast" role="status"></div>
 <script>
 (function(){
-  var root=document, current="today", cache=[];
+  var data={queue:[],items:[],activity:[]};
+  var current="today";
   var titles={
-    today:["Today","The things worth looking at first — not another system to maintain."],
-    hold:["Hold Queue","Review, edit, approve or skip drafted Heartbeat replies."],
-    clients:["Client Attention","A visual priority list fed by ChatGPT from your connected systems."],
-    collections:["Collections","Revenue opportunities and next actions in one place."],
-    refunds:["Refunds","Context and decisions without hunting through threads."],
-    calls:["Calls","Upcoming conversations and useful preparation."],
-    followups:["Follow-ups","Promises and proactive touches that should not depend on memory."],
-    activity:["Activity","A simple audit trail of what happened."]
+    today:["Today","Your shortest useful view of what needs attention."],
+    hold:["Hold Queue","Review, edit and approve drafts without accidentally sending them."],
+    clients:["Client Attention","A visual priority board built from what I find across your connected systems."],
+    collections:["Collections","Open revenue actions surfaced from your work context."],
+    refunds:["Refunds","Cases that need context, conversation or a decision."],
+    calls:["Calls","Useful call prep and upcoming conversations."],
+    followups:["Follow-ups","Promises and proactive touches you should not have to remember."],
+    activity:["Activity","A simple audit trail of what you and I changed."]
   };
   function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]})}
-  function toast(msg){var el=root.getElementById("toast");el.textContent=msg;el.classList.add("show");setTimeout(function(){el.classList.remove("show")},2200)}
-  function fmt(d){if(!d)return "";try{return new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}).format(new Date(d))}catch(e){return d}}
-  function renderCards(items,target,compact){
-    var el=root.getElementById(target);
-    if(!items.length){el.innerHTML='<div class="empty"><b>Nothing waiting here</b><span>You are clear for this queue.</span></div>';return}
-    el.innerHTML=items.map(function(x){
-      var editable=x.status==="HOLD"||x.status==="APPROVED";
-      var buttons=compact?'':('<div class="actions">'+
-        (editable?'<button class="btn" data-action="save" data-id="'+x.id+'">Save edit</button>':'')+
-        (x.status==="HOLD"?'<button class="btn approve" data-action="approve" data-id="'+x.id+'">Approve</button>':'')+
-        (x.status==="APPROVED"?'<button class="btn primary" data-action="post" data-id="'+x.id+'">Post to Heartbeat</button>':'')+
-        ((x.status==="HOLD"||x.status==="APPROVED")?'<button class="btn danger" data-action="skip" data-id="'+x.id+'">Skip</button>':'')+
-      '</div>');
-      return '<article class="queue-card" data-card="'+x.id+'"><div class="qtop"><div><div class="client">'+esc(x.client_name)+'</div><div class="meta">#'+x.id+' · '+fmt(x.created_at)+'</div></div><span class="pill '+String(x.status).toLowerCase()+'">'+esc(x.status)+'</span></div>'+
-      (compact?'<div style="margin-top:12px;font-size:14px;line-height:1.5">'+esc(x.draft)+'</div>':'<textarea class="draft" '+(editable?'':'disabled')+'>'+esc(x.draft)+'</textarea>')+
-      (x.reason?'<div class="reason">Why: '+esc(x.reason)+'</div>':'')+buttons+'</article>'
+  function fmt(d){if(!d)return "";try{return new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}).format(new Date(d))}catch(e){return String(d)}}
+  function toast(msg){var x=document.getElementById("toast");x.textContent=msg;x.classList.add("show");setTimeout(function(){x.classList.remove("show")},2200)}
+  async function api(url,opts){var r=await fetch(url,opts||{});if(r.status===401){location.href="/dashboard/login";throw new Error("Signed out")}var j=await r.json().catch(function(){return{}});if(!r.ok)throw new Error(j.error||"Something went wrong");return j}
+  function empty(title,text){return '<div class="empty"><b>'+esc(title)+'</b>'+esc(text)+'</div>'}
+  function qCard(x,compact){
+    var editable=x.status==="HOLD"||x.status==="APPROVED";
+    var actions=compact?"":'<div class="actions">'+
+      (editable?'<button class="btn" data-qaction="save" data-id="'+x.id+'">Save edit</button>':'')+
+      (x.status==="HOLD"?'<button class="btn blue" data-qaction="approve" data-id="'+x.id+'">Approve</button>':'')+
+      (x.status==="APPROVED"?'<button class="btn primary" data-qaction="post" data-id="'+x.id+'">Post to Heartbeat</button>':'')+
+      ((x.status==="HOLD"||x.status==="APPROVED")?'<button class="btn red" data-qaction="skip" data-id="'+x.id+'">Skip</button>':'')+
+      '</div>';
+    return '<article class="queue-card" data-qcard="'+x.id+'"><div class="qtop"><div><div class="client">'+esc(x.client_name)+'</div><div class="meta">#'+x.id+' · '+fmt(x.created_at)+'</div></div><span class="pill '+String(x.status).toLowerCase()+'">'+esc(x.status)+'</span></div>'+
+      (compact?'<div class="preview">'+esc(x.draft)+'</div>':'<textarea class="draft" '+(editable?'':'disabled')+'>'+esc(x.draft)+'</textarea>')+
+      (x.reason?'<div class="reason">Why: '+esc(x.reason)+'</div>':'')+actions+'</article>';
+  }
+  function itemCard(x,showCategory){
+    return '<article class="item-card" data-item="'+x.id+'"><div class="itop"><div><div class="item-title">'+esc(x.title)+'</div><div class="meta">'+(x.client_name?esc(x.client_name)+' · ':'')+(showCategory?esc(labelCategory(x.category))+' · ':'')+esc(x.source||"ChatGPT")+'</div></div><span class="priority '+esc(x.priority)+'">'+esc(x.priority)+'</span></div>'+
+      (x.summary?'<div class="item-summary">'+esc(x.summary)+'</div>':'')+
+      '<div class="item-foot"><span>'+(x.due_at?'Due '+fmt(x.due_at):'Updated '+fmt(x.updated_at))+'</span><div><button class="btn" data-iresolve="DONE" data-id="'+x.id+'">Done</button> <button class="btn" data-iresolve="DISMISSED" data-id="'+x.id+'">Dismiss</button></div></div></article>';
+  }
+  function labelCategory(c){return({CLIENT_ATTENTION:"Client attention",COLLECTION:"Collection",REFUND:"Refund",CALL:"Call",FOLLOW_UP:"Follow-up"})[c]||c}
+  function eventIcon(t){if(t.indexOf("posted")>-1)return "✓";if(t.indexOf("approved")>-1)return "→";if(t.indexOf("created")>-1)return "+";if(t.indexOf("skipped")>-1)return "×";if(t.indexOf("edited")>-1)return "✎";return "•"}
+  function activityRows(items,limit){
+    var a=limit?items.slice(0,limit):items;if(!a.length)return empty("No activity yet","Actions you and I take will appear here.");
+    return a.map(function(x){return '<div class="activity-row"><div class="activity-icon">'+eventIcon(x.event_type)+'</div><div><div class="activity-title">'+esc(x.title)+(x.client_name?' · '+esc(x.client_name):'')+'</div>'+(x.detail?'<div class="activity-detail">'+esc(x.detail)+'</div>':'')+'<div class="activity-time">'+esc(x.actor)+' · '+fmt(x.created_at)+'</div></div></div>'}).join("");
+  }
+  function renderList(category,target,emptyTitle,emptyText){
+    var a=data.items.filter(function(x){return x.category===category});
+    document.getElementById(target).innerHTML=a.length?a.map(function(x){return itemCard(x,false)}).join(""):empty(emptyTitle,emptyText);
+  }
+  function renderClientBoard(){
+    var items=data.items.filter(function(x){return x.category==="CLIENT_ATTENTION"});
+    var lanes=[["URGENT","Urgent"],["HIGH","High priority"],["NORMAL","Normal"]];
+    document.getElementById("clientBoard").innerHTML=lanes.map(function(l){
+      var a=items.filter(function(x){return x.priority===l[0]||(l[0]==="NORMAL"&&x.priority==="LOW")});
+      return '<div class="lane"><div class="lane-head"><div class="lane-title">'+l[1]+'</div><div class="lane-count">'+a.length+'</div></div><div class="stack">'+(a.length?a.map(function(x){return itemCard(x,false)}).join(""):empty("Clear","Nothing in this lane."))+'</div></div>';
     }).join("");
   }
-  async function api(url,opts){var r=await fetch(url,opts||{});if(r.status===401){location.href="/dashboard/login";throw new Error("Signed out")}var j=await r.json().catch(function(){return{}});if(!r.ok)throw new Error(j.error||"Something went wrong");return j}
-  async function load(){
-    try{
-      var data=await api("/dashboard/api/hold-queue");
-      cache=data.items||[];
-      var hold=cache.filter(function(x){return x.status==="HOLD"});
-      root.getElementById("holdCount").textContent=hold.length;
-      root.getElementById("navHold").textContent=hold.length;
-      root.getElementById("todayPill").textContent=hold.length?hold.length+" waiting":"Clear";
-      renderCards(hold.slice(0,4),"todayQueue",true);
-      filterQueue();
-      root.querySelector(".statusline")&&0;
-    }catch(e){toast(e.message)}
+  function render(){
+    var hold=data.queue.filter(function(x){return x.status==="HOLD"});
+    var openAttention=data.items.filter(function(x){return x.category==="CLIENT_ATTENTION"});
+    var collections=data.items.filter(function(x){return x.category==="COLLECTION"});
+    var followups=data.items.filter(function(x){return x.category==="FOLLOW_UP"});
+    document.getElementById("statHold").textContent=hold.length;
+    document.getElementById("statAttention").textContent=openAttention.length;
+    document.getElementById("statCollections").textContent=collections.length;
+    document.getElementById("statFollowups").textContent=followups.length;
+    document.getElementById("navHold").textContent=hold.length;document.getElementById("navAttention").textContent=openAttention.length;
+    document.getElementById("todayBadge").textContent=(hold.length+data.items.length)?(hold.length+data.items.length)+" open":"Clear";
+    var priorities=data.items.filter(function(x){return x.priority==="URGENT"||x.priority==="HIGH"}).slice(0,5);
+    document.getElementById("todayPriority").innerHTML=priorities.length?priorities.map(function(x){return itemCard(x,true)}).join(""):empty("No high-priority items","Anything important I surface will land here first.");
+    document.getElementById("todayQueue").innerHTML=hold.length?hold.slice(0,3).map(function(x){return qCard(x,true)}).join(""):empty("No drafts waiting","Your Heartbeat Hold Queue is clear.");
+    document.getElementById("todayActivity").innerHTML=activityRows(data.activity,8);
+    document.getElementById("activityList").innerHTML=activityRows(data.activity);
+    filterQueue();renderClientBoard();
+    renderList("COLLECTION","collectionList","No collection actions","When I surface collectible revenue or payment follow-ups, they will live here.");
+    renderList("REFUND","refundList","No refund cases","Refund context and next actions I surface will appear here.");
+    renderList("CALL","callList","No call prep yet","Upcoming calls and useful prep will appear here when surfaced.");
+    renderList("FOLLOW_UP","followupList","No follow-ups","Anything you should not have to remember will appear here.");
   }
-  function filterQueue(){var f=root.getElementById("queueFilter").value;renderCards(f?cache.filter(function(x){return x.status===f}):cache,"holdQueue",false)}
-  root.getElementById("nav").addEventListener("click",function(e){
-    var b=e.target.closest("button[data-view]");if(!b)return;
-    current=b.dataset.view;
-    root.querySelectorAll("#nav button").forEach(function(x){x.classList.toggle("active",x===b)});
-    root.querySelectorAll("main section[id^='view-']").forEach(function(s){s.classList.toggle("hidden",s.id!=="view-"+current)});
-    root.getElementById("viewTitle").textContent=titles[current][0];root.getElementById("viewSub").textContent=titles[current][1];
-  });
-  root.getElementById("refresh").addEventListener("click",load);
-  root.getElementById("queueFilter").addEventListener("change",filterQueue);
-  root.getElementById("holdQueue").addEventListener("click",async function(e){
-    var b=e.target.closest("button[data-action]");if(!b)return;
-    var id=Number(b.dataset.id),action=b.dataset.action,card=root.querySelector('[data-card="'+id+'"]');
+  function filterQueue(){var f=document.getElementById("queueFilter").value;var q=f?data.queue.filter(function(x){return x.status===f}):data.queue;document.getElementById("holdQueue").innerHTML=q.length?q.map(function(x){return qCard(x,false)}).join(""):empty("Nothing here","This queue is clear.");}
+  async function load(){try{data=await api("/dashboard/api/overview");render()}catch(e){toast(e.message)}}
+  function switchView(view){current=view;document.querySelectorAll("#nav button").forEach(function(b){b.classList.toggle("active",b.dataset.view===view)});document.querySelectorAll("main section[id^='view-']").forEach(function(s){s.classList.toggle("hidden",s.id!=="view-"+view)});document.getElementById("viewTitle").textContent=titles[view][0];document.getElementById("viewSub").textContent=titles[view][1];}
+  document.getElementById("nav").addEventListener("click",function(e){var b=e.target.closest("button[data-view]");if(b)switchView(b.dataset.view)});
+  document.body.addEventListener("click",function(e){var j=e.target.closest("[data-jump]");if(j)switchView(j.dataset.jump)});
+  document.getElementById("refresh").addEventListener("click",load);
+  document.getElementById("queueFilter").addEventListener("change",filterQueue);
+  document.getElementById("holdQueue").addEventListener("click",async function(e){
+    var b=e.target.closest("[data-qaction]");if(!b)return;var id=Number(b.dataset.id),act=b.dataset.qaction,card=document.querySelector('[data-qcard="'+id+'"]');
     try{
       b.disabled=true;
-      if(action==="save"){
-        var draft=card.querySelector("textarea").value.trim();if(!draft)throw new Error("Draft cannot be empty");
-        await api("/dashboard/api/hold-queue/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({draft:draft})});toast("Draft saved — back in HOLD");
-      }else if(action==="approve"){
-        await api("/dashboard/api/hold-queue/"+id+"/approve",{method:"POST"});toast("Approved — not posted yet");
-      }else if(action==="skip"){
-        if(!confirm("Skip this draft? It will not be sent.")){b.disabled=false;return}
-        await api("/dashboard/api/hold-queue/"+id+"/skip",{method:"POST"});toast("Draft skipped");
-      }else if(action==="post"){
-        if(!confirm("Post this exact approved draft to Heartbeat now?")){b.disabled=false;return}
-        await api("/dashboard/api/hold-queue/"+id+"/post",{method:"POST"});toast("Posted to Heartbeat");
-      }
+      if(act==="save"){var draft=card.querySelector("textarea").value.trim();if(!draft)throw new Error("Draft cannot be empty");await api("/dashboard/api/hold-queue/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({draft:draft})});toast("Draft saved — approval reset");}
+      if(act==="approve"){await api("/dashboard/api/hold-queue/"+id+"/approve",{method:"POST"});toast("Approved — still not sent");}
+      if(act==="skip"){if(!confirm("Skip this draft? It will not be sent.")){b.disabled=false;return}await api("/dashboard/api/hold-queue/"+id+"/skip",{method:"POST"});toast("Draft skipped");}
+      if(act==="post"){if(!confirm("Post this exact approved draft to Heartbeat now?")){b.disabled=false;return}await api("/dashboard/api/hold-queue/"+id+"/post",{method:"POST"});toast("Posted to Heartbeat");}
       await load();
     }catch(err){toast(err.message);b.disabled=false}
+  });
+  document.body.addEventListener("click",async function(e){
+    var b=e.target.closest("[data-iresolve]");if(!b)return;
+    try{b.disabled=true;await api("/dashboard/api/items/"+b.dataset.id+"/resolve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:b.dataset.iresolve})});toast(b.dataset.iresolve==="DONE"?"Marked done":"Dismissed");await load()}catch(err){toast(err.message);b.disabled=false}
   });
   load();
 })();
