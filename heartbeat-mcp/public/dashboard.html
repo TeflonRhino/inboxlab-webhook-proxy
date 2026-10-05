@@ -363,7 +363,7 @@
       var localStart=new Date(now.getFullYear(),now.getMonth(),now.getDate(),0,0,0,0);
       var localEnd=new Date(now.getFullYear(),now.getMonth(),now.getDate()+1,0,0,0,0);
       var ctx=await api("/dashboard/api/eod/context?start="+encodeURIComponent(localStart.toISOString())+"&end="+encodeURIComponent(localEnd.toISOString()));
-      var activity=ctx.activity||[],actions=ctx.actions||[],items=ctx.items||[],events=(ctx.calendly&&ctx.calendly.events)||[];
+      var activity=ctx.activity||[],actions=ctx.actions||[],items=ctx.items||[],events=(ctx.calendly&&ctx.calendly.events)||[],fathomMeetings=(ctx.fathom&&ctx.fathom.meetings)||[];
 
       function isNoiseText(s){
         var t=normaliseEod(s);
@@ -410,7 +410,19 @@
       var rescheduled=eventInvitees.filter(function(x){return !!x.invitee.rescheduled||!!x.invitee.old_invitee}).length;
       var canceled=eventInvitees.filter(function(x){return x.invitee.status==="canceled"||x.event.status==="canceled"}).length;
 
-      var likelyTaken=eventInvitees.filter(function(x){
+      function meetingMatchesInvitee(m,x){
+        var n=normaliseEod(inviteeName(x));
+        var title=normaliseEod((m.title||"")+" "+(m.meeting_title||""));
+        if(n && title.includes(n))return true;
+        return (m.calendar_invitees||[]).some(function(i){
+          return normaliseEod(i.name)===n ||
+            (i.email&&x.invitee.email&&String(i.email).toLowerCase()===String(x.invitee.email).toLowerCase());
+        });
+      }
+      var matchedTaken=eventInvitees.filter(function(x){
+        return fathomMeetings.some(function(m){return meetingMatchesInvitee(m,x)});
+      }).length;
+      var likelyTaken=fathomMeetings.length?matchedTaken:eventInvitees.filter(function(x){
         return x.event.status==="active" && x.invitee.status!=="canceled" && !hasNoShowSignal(x) && new Date(x.event.end_time||0)<=now;
       }).length;
 
@@ -436,7 +448,30 @@
       lines.push("*Launch Calls:* "+launch);
       lines.push("*Post-Launch / Support Calls:* "+post);
 
+      function cleanSummary(s){
+        var t=String(s||"").replace(/[\n\r\t]+/g," ").replace(/\s+/g," ").trim();
+        if(!t)return "";
+        return t.length>220?t.slice(0,217)+"…":t;
+      }
+      function meetingPerson(m){
+        var ext=(m.calendar_invitees||[]).find(function(i){return i&&i.is_external&&i.name});
+        if(ext)return ext.name;
+        var named=(m.calendar_invitees||[]).find(function(i){return i&&i.name});
+        if(named)return named.name;
+        return m.title||m.meeting_title||"Client call";
+      }
+
       var work=[];
+
+      fathomMeetings.forEach(function(m){
+        var name=meetingPerson(m);
+        var summary=cleanSummary(m.summary);
+        var next=(m.action_items||[]).filter(function(a){return a&&a.description&&!a.completed}).slice(0,2).map(function(a){return String(a.description).trim()});
+        var text=name+" — call completed";
+        if(summary)text+=": "+summary;
+        if(next.length)text+=" Next: "+next.join("; ");
+        addWork(work,text);
+      });
       eventInvitees.forEach(function(x){
         var name=inviteeName(x);
         var chased=heartbeat.some(function(h){return normaliseEod(h.client_name)===normaliseEod(name)});
@@ -511,7 +546,11 @@
       checks.push('<div class="item-card"><div class="item-title">'+booked+' Calendly booking(s) found today</div><div class="item-summary">'+likelyTaken+' likely taken · '+noShows+' no-show · '+rescheduled+' rescheduled · '+canceled+' cancelled.</div></div>');
       checks.push('<div class="item-card"><div class="item-title">'+heartbeat.length+' meaningful Heartbeat message(s) sent from the Command Centre</div><div class="item-summary">Test messages and reminder-card noise are excluded.</div></div>');
       if(ctx.calendly&&ctx.calendly.error)checks.push('<div class="item-card"><div class="item-title">Calendly warning</div><div class="item-summary">'+esc(ctx.calendly.error)+'</div></div>');
-      checks.push('<div class="item-card"><div class="item-title">Call attendance is still inferred</div><div class="item-summary">Calendly tells us bookings, cancellations, reschedules and marked no-shows. Fathom will be the next useful source for confirming calls actually taken.</div></div>');
+      if(ctx.fathom&&ctx.fathom.available){
+        checks.push('<div class="item-card"><div class="item-title">'+fathomMeetings.length+' Fathom recording(s) found today</div><div class="item-summary">These now confirm calls taken and enrich the report with outcomes and next steps.</div></div>');
+      }else{
+        checks.push('<div class="item-card"><div class="item-title">Fathom not connected to the dashboard yet</div><div class="item-summary">'+esc((ctx.fathom&&ctx.fathom.error)||"Add FATHOM_API_KEY in Render to confirm calls and enrich outcomes.")+'</div></div>');
+      }
       document.getElementById("eodChecks").innerHTML=checks.join("");
     }catch(e){
       draft.value="";
