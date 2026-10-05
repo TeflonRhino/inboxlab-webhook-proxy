@@ -172,7 +172,7 @@
   // Keep messaging state separate from the overview's periodic renders.
   var selectedChat=null, messageMatches=[], messageDrafts=Object.create(null);
   var searchVersion=0, contextVersion=0, messageSending=false;
-  var mentionUsers=[],mentionStart=-1,mentionEnd=-1,mentionVersion=0;
+  var mentionUsers=[],mentionStart=-1,mentionEnd=-1,mentionVersion=0,mentionMode="users";
   var messageDraft=document.getElementById("messageDraft");
   var mentionMenu=document.getElementById("mentionMenu");
   var sendMessage=document.getElementById("sendMessage");
@@ -219,7 +219,12 @@
   function hideMentions(){mentionMenu.classList.add("hidden");mentionMenu.innerHTML="";mentionUsers=[];mentionStart=-1;mentionEnd=-1}
   function renderMentions(){
     if(!mentionUsers.length){hideMentions();return}
-    mentionMenu.innerHTML=mentionUsers.map(function(u,i){return '<button type="button" class="mention-option" data-mention-index="'+i+'"><b>@'+esc(u.name)+'</b><span>Heartbeat user</span></button>'}).join("");
+    mentionMenu.innerHTML=mentionUsers.map(function(u,i){
+      if(mentionMode==="calendly"){
+        return '<button type="button" class="mention-option" data-mention-index="'+i+'"><b>'+esc(u.name)+'</b><span>'+esc((u.duration?u.duration+' min · ':'')+'Calendly link')+'</span></button>';
+      }
+      return '<button type="button" class="mention-option" data-mention-index="'+i+'"><b>@'+esc(u.name)+'</b><span>Heartbeat user</span></button>';
+    }).join("");
     mentionMenu.classList.remove("hidden");
   }
   async function maybeSearchMentions(){
@@ -231,9 +236,18 @@
     if(!q){hideMentions();return}
     var v=++mentionVersion;
     try{
-      var r=await api("/dashboard/api/messages/mentions?q="+encodeURIComponent(q));
+      if("calendly".indexOf(q.toLowerCase())===0 || q.toLowerCase()==="calendly"){
+        mentionMode="calendly";
+        var r=await api("/dashboard/api/calendly/event-types");
+        if(v!==mentionVersion)return;
+        mentionUsers=r.event_types||[];
+        renderMentions();
+        return;
+      }
+      mentionMode="users";
+      var r2=await api("/dashboard/api/messages/mentions?q="+encodeURIComponent(q));
       if(v!==mentionVersion)return;
-      mentionUsers=r.users||[];renderMentions();
+      mentionUsers=r2.users||[];renderMentions();
     }catch(e){hideMentions()}
   }
   messageDraft.addEventListener("input",function(){if(selectedChat)messageDrafts[selectedChat.id]=messageDraft.value;updateMessageControls();maybeSearchMentions()});
@@ -242,8 +256,9 @@
     var b=e.target.closest("[data-mention-index]");if(!b)return;e.preventDefault();
     var u=mentionUsers[Number(b.dataset.mentionIndex)];if(!u||mentionStart<0)return;
     var before=messageDraft.value.slice(0,mentionStart),after=messageDraft.value.slice(mentionEnd);
-    messageDraft.value=before+"@"+u.name+" "+after;
-    var p=(before+"@"+u.name+" ").length;messageDraft.focus();messageDraft.setSelectionRange(p,p);
+    var insert=mentionMode==="calendly"?(u.scheduling_url+" "):("@"+u.name+" ");
+    messageDraft.value=before+insert+after;
+    var p=(before+insert).length;messageDraft.focus();messageDraft.setSelectionRange(p,p);
     if(selectedChat)messageDrafts[selectedChat.id]=messageDraft.value;hideMentions();updateMessageControls();
   });
   refreshMessages.addEventListener("click",loadMessageContext);
