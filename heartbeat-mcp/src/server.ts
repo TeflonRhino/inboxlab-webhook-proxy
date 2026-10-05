@@ -4,11 +4,15 @@ import { createMcpHandler } from "@modelcontextprotocol/server";
 import { createMcpExpressApp } from "@modelcontextprotocol/express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import * as z from "zod/v4";
+import pg from "pg";
 
 const HEARTBEAT_BASE_URL = "https://api.heartbeat.chat/v0";
 const HEARTBEAT_API_KEY = process.env.HEARTBEAT_API_KEY;
 const MCP_PATH_TOKEN = process.env.MCP_PATH_TOKEN;
 const PORT = Number(process.env.PORT || 3000);
+const DATABASE_URL = process.env.DATABASE_URL;
+const HEARTBEAT_FROM_USER_ID = process.env.HEARTBEAT_FROM_USER_ID || "d8a956be-e3e4-4ef1-9978-6f1b448d3cba";
+const pool = DATABASE_URL ? new pg.Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } }) : null;
 
 if (!HEARTBEAT_API_KEY) throw new Error("HEARTBEAT_API_KEY is required");
 if (!MCP_PATH_TOKEN || MCP_PATH_TOKEN.length < 24) throw new Error("MCP_PATH_TOKEN is required and should be at least 24 characters");
@@ -26,6 +30,70 @@ type HeartbeatMessage = {
 type HeartbeatUser = { id?: string; name?: string; fullName?: string; firstName?: string; lastName?: string; email?: string; [k: string]: unknown };
 
 let userCache: { at: number; byId: Map<string, string> } | null = null;
+
+async function ensureQueueTable() {
+  if (!pool) throw new Error("DATABASE_URL is not configured");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS heartbeat_hold_queue (
+      id BIGSERIAL PRIMARY KEY,
+      client_name TEXT NOT NULL,
+      channel_id UUID NOT NULL,
+      draft TEXT NOT NULL,
+      reason TEXT,
+      status TEXT NOT NULL DEFAULT 'HOLD',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      approved_at TIMESTAMPTZ,
+      posted_at TIMESTAMPTZ
+    )
+  `);
+}
+
+async function sendHeartbeatMessage(channelID: string, text: string) {
+  const url = `${HEARTBEAT_BASE_URL}/chatChannel/${encodeURIComponent(channelID)}/message`;
+  const response = await fetch(url, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${HEARTBEAT_API_KEY}`,
+      Accept: "application/json",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ text, from: HEARTBEAT_FROM_USER_ID }),
+    signal: AbortSignal.timeout(20000)
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Heartbeat send failed ${response.status}: ${body}`);
+  }
+}
+
+async function queueReply(clientName: string, draft: string, reason?: string) {
+  await ensureQueueTable();
+  const matches = await findChatChannels(clientName);
+  if (matches.length === 0) throw new Error("No matching Heartbeat CHAT channel found");
+  if (matches.length > 1) throw new Error("Client name is ambiguous; use a more specific name");
+  const channel = matches[0];
+  const result = await pool!.query(
+    `INSERT INTO heartbeat_hold_queue (client_name, channel_id, draft, reason)
+     VALUES ($1,$2,$3,$4)
+     RETURNING *`,
+    [channel.name, channel.id, draft, reason || null]
+  );
+  return result.rows[0];
+}
+
+async function listQueue(status?: string) {
+  await ensureQueueTable();
+  const result = status
+    ? await pool!.query(
+        `SELECT * FROM heartbeat_hold_queue WHERE status = $1 ORDER BY created_at DESC LIMIT 100`,
+        [status]
+      )
+    : await pool!.query(
+        `SELECT * FROM heartbeat_hold_queue ORDER BY created_at DESC LIMIT 100`
+      );
+  return result.rows;
+}
 
 async function heartbeat<T = unknown>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
   const url = new URL(`${HEARTBEAT_BASE_URL}${path}`);
@@ -166,7 +234,7 @@ function textResult(value: unknown) {
 }
 
 function buildServer() {
-  const server = new McpServer({ name: "heartbeat-client-success", version: "0.2.0" }, { capabilities: { tools: {} } });
+  const server = new McpServer({ name: "heartbeat-client-success", version: "0.3.0" }, { capabilities: { tools: {} } });
 
   server.registerTool("list_heartbeat_channels", {
     description: "List Heartbeat channels. Read-only.",
@@ -224,12 +292,116 @@ function buildServer() {
     });
   });
 
+  server.registerTool("queue_client_reply", {
+    description: "Save a drafted client reply to the persistent HOLD queue. This never sends a message.",
+    inputSchema: z.object({
+      name: z.string().min(1),
+      draft: z.string().min(1),
+      reason: z.string().optional()
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    securitySchemes: [{ type: "noauth" }]
+  }, async ({ name, draft, reason }) => {
+    const item = await queueReply(name, draft, reason);
+    return textResult({ queued: true, item });
+  });
+
+  server.registerTool("list_hold_queue", {
+    description: "List queued Heartbeat reply drafts. Defaults to HOLD items.",
+    inputSchema: z.object({
+      status: z.enum(["HOLD","APPROVED","POSTED","SKIPPED"]).default("HOLD")
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    securitySchemes: [{ type: "noauth" }]
+  }, async ({ status }) => textResult({ status, items: await listQueue(status) }));
+
+  server.registerTool("edit_hold_item", {
+    description: "Edit a queued draft or reason. Editing resets the item to HOLD so it must be approved again.",
+    inputSchema: z.object({
+      id: z.number().int().positive(),
+      draft: z.string().min(1).optional(),
+      reason: z.string().optional()
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    securitySchemes: [{ type: "noauth" }]
+  }, async ({ id, draft, reason }) => {
+    await ensureQueueTable();
+    const current = await pool!.query(`SELECT * FROM heartbeat_hold_queue WHERE id=$1`, [id]);
+    if (!current.rowCount) throw new Error("Queue item not found");
+    const nextDraft = draft ?? current.rows[0].draft;
+    const nextReason = reason ?? current.rows[0].reason;
+    const result = await pool!.query(
+      `UPDATE heartbeat_hold_queue
+       SET draft=$2, reason=$3, status='HOLD', approved_at=NULL, updated_at=NOW()
+       WHERE id=$1 RETURNING *`,
+      [id, nextDraft, nextReason]
+    );
+    return textResult({ updated: true, item: result.rows[0] });
+  });
+
+  server.registerTool("approve_hold_item", {
+    description: "Approve one HOLD draft for posting. This does not send it yet.",
+    inputSchema: z.object({ id: z.number().int().positive() }),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    securitySchemes: [{ type: "noauth" }]
+  }, async ({ id }) => {
+    await ensureQueueTable();
+    const result = await pool!.query(
+      `UPDATE heartbeat_hold_queue
+       SET status='APPROVED', approved_at=NOW(), updated_at=NOW()
+       WHERE id=$1 AND status='HOLD' RETURNING *`,
+      [id]
+    );
+    if (!result.rowCount) throw new Error("Item must exist and be in HOLD status");
+    return textResult({ approved: true, item: result.rows[0] });
+  });
+
+  server.registerTool("skip_hold_item", {
+    description: "Mark a HOLD or APPROVED queue item as SKIPPED. This never sends it.",
+    inputSchema: z.object({ id: z.number().int().positive() }),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    securitySchemes: [{ type: "noauth" }]
+  }, async ({ id }) => {
+    await ensureQueueTable();
+    const result = await pool!.query(
+      `UPDATE heartbeat_hold_queue
+       SET status='SKIPPED', updated_at=NOW()
+       WHERE id=$1 AND status IN ('HOLD','APPROVED') RETURNING *`,
+      [id]
+    );
+    if (!result.rowCount) throw new Error("Item must exist and be HOLD or APPROVED");
+    return textResult({ skipped: true, item: result.rows[0] });
+  });
+
+  server.registerTool("post_approved_reply", {
+    description: "Post the exact draft from an APPROVED queue item to Heartbeat, then mark it POSTED. Refuses HOLD drafts.",
+    inputSchema: z.object({ id: z.number().int().positive() }),
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+    securitySchemes: [{ type: "noauth" }]
+  }, async ({ id }) => {
+    await ensureQueueTable();
+    const current = await pool!.query(
+      `SELECT * FROM heartbeat_hold_queue WHERE id=$1 AND status='APPROVED'`,
+      [id]
+    );
+    if (!current.rowCount) throw new Error("Item must be explicitly APPROVED before posting");
+    const item = current.rows[0];
+    await sendHeartbeatMessage(item.channel_id, item.draft);
+    const result = await pool!.query(
+      `UPDATE heartbeat_hold_queue
+       SET status='POSTED', posted_at=NOW(), updated_at=NOW()
+       WHERE id=$1 RETURNING *`,
+      [id]
+    );
+    return textResult({ posted: true, item: result.rows[0] });
+  });
+
   return server;
 }
 
 const mcpHandler = createMcpHandler(buildServer);
 const app = createMcpExpressApp({ host: "0.0.0.0" });
-app.get("/health", (_req, res) => res.json({ ok: true, service: "heartbeat-client-success-mcp", version: "0.2.0" }));
+app.get("/health", (_req, res) => res.json({ ok: true, service: "heartbeat-client-success-mcp", version: "0.3.0" }));
 const nodeHandler = toNodeHandler(mcpHandler);
 app.all(`/mcp/${MCP_PATH_TOKEN}`, (req, res) => void nodeHandler(req, res, req.body));
 app.listen(PORT, "0.0.0.0", () => console.log(`Heartbeat MCP listening on ${PORT}`));
