@@ -197,6 +197,9 @@ async function sendHeartbeatMessage(channelID: string, text: string) {
 
   const body = await response.text();
   if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error("Heartbeat web token expired or is invalid — update HEARTBEAT_WEB_TOKEN in Render, then retry.");
+    }
     throw new Error(`Heartbeat send failed ${response.status}: ${body}`);
   }
 }
