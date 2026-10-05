@@ -236,7 +236,7 @@
     if(!q){hideMentions();return}
     var v=++mentionVersion;
     try{
-      if("calendly".indexOf(q.toLowerCase())===0 || q.toLowerCase()==="calendly"){
+      if(q.toLowerCase()==="calendly"){
         mentionMode="calendly";
         var r=await api("/dashboard/api/calendly/event-types");
         if(v!==mentionVersion)return;
