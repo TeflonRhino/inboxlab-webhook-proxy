@@ -464,7 +464,8 @@ function buildServer() {
           summary: command.summary ? String(command.summary) : undefined,
           priority: ["URGENT","HIGH","NORMAL","LOW"].includes(String(command.priority)) ? String(command.priority) : "NORMAL",
           source: command.source ? String(command.source) : "ChatGPT",
-          dueAt: command.due_at ? String(command.due_at) : undefined
+          dueAt: command.due_at ? String(command.due_at) : undefined,
+          metadata: command.metadata && typeof command.metadata === "object" ? command.metadata : undefined
         });
         if (!item.title) throw new Error("Dashboard item title is required");
         return textResult({ dashboard: true, action: "add", item });
@@ -575,12 +576,13 @@ function buildServer() {
       summary: z.string().optional(),
       priority: z.enum(["URGENT","HIGH","NORMAL","LOW"]).default("NORMAL"),
       source: z.string().default("ChatGPT"),
-      due_at: z.string().optional()
+      due_at: z.string().optional(),
+      metadata: z.record(z.string(), z.unknown()).optional()
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     securitySchemes: [{ type: "noauth" }]
-  }, async ({ category, client_name, title, summary, priority, source, due_at }) => {
-    const item = await createDashboardItem({ category, clientName: client_name, title, summary, priority, source, dueAt: due_at });
+  }, async ({ category, client_name, title, summary, priority, source, due_at, metadata }) => {
+    const item = await createDashboardItem({ category, clientName: client_name, title, summary, priority, source, dueAt: due_at, metadata });
     return textResult({ created: true, item });
   });
 
