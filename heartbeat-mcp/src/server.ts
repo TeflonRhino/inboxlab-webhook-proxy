@@ -37,6 +37,12 @@ type HeartbeatMessage = {
 type HeartbeatUser = { id?: string; name?: string; fullName?: string; firstName?: string; lastName?: string; email?: string; [k: string]: unknown };
 
 let userCache: { at: number; byId: Map<string, string> } | null = null;
+let calendlyEventTypeCache: {
+  at: number;
+  user: { name: string; scheduling_url: string };
+  event_types: Array<{ uri: string; name: string; duration: number | null; scheduling_url: string; kind: string | null }>;
+} | null = null;
+const CALENDLY_EVENT_TYPE_CACHE_MS = 5 * 60 * 1000;
 
 async function ensureQueueTable() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -875,6 +881,14 @@ app.get("/dashboard/api/calendly/event-types", requireDashboardAuth, async (_req
   try {
     if (!CALENDLY_ACCESS_TOKEN) return res.status(503).json({ error: "CALENDLY_ACCESS_TOKEN is not configured" });
 
+    if (calendlyEventTypeCache && Date.now() - calendlyEventTypeCache.at < CALENDLY_EVENT_TYPE_CACHE_MS) {
+      return res.json({
+        user: calendlyEventTypeCache.user,
+        event_types: calendlyEventTypeCache.event_types,
+        cached: true
+      });
+    }
+
     const headers = {
       Authorization: `Bearer ${CALENDLY_ACCESS_TOKEN}`,
       Accept: "application/json"
@@ -920,10 +934,10 @@ app.get("/dashboard/api/calendly/event-types", requireDashboardAuth, async (_req
         kind: e.kind || null
       }));
 
-    res.json({
-      user: { name: meBody.resource.name, scheduling_url: meBody.resource.scheduling_url },
-      event_types: eventTypes
-    });
+    const user = { name: meBody.resource.name, scheduling_url: meBody.resource.scheduling_url };
+    calendlyEventTypeCache = { at: Date.now(), user, event_types: eventTypes };
+
+    res.json({ user, event_types: eventTypes, cached: false });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to load Calendly event types" });
   }
