@@ -70,7 +70,7 @@
     <div class="stat"><div class="stat-top"><div class="label">Replies waiting</div><span class="dot"></span></div><div class="value" id="statHold">—</div><div class="hint">Heartbeat drafts in HOLD</div></div>
     <div class="stat"><div class="label">Needs attention</div><div class="value" id="statAttention">—</div><div class="hint">Clients surfaced by ChatGPT</div></div>
     <div class="stat"><div class="label">Collections</div><div class="value" id="statCollections">—</div><div class="hint">Open revenue actions</div></div>
-    <div class="stat"><div class="label">Open follow-ups</div><div class="value" id="statFollowups">—</div><div class="hint">Things not to rely on memory for</div></div>
+    <div class="stat"><div class="label">Calls due</div><div class="value" id="statFollowups">—</div><div class="hint">Client calls with reminder cards</div></div>
   </div>
   <div class="notice"><b>Visual layer only.</b> Slack, Calendar, Close, Heartbeat, Fathom and Airtable stay connected to ChatGPT. I surface only the useful operational output here.</div>
   <div class="workspace section">
@@ -180,7 +180,7 @@
     var hold=data.queue.filter(function(x){return x.status==="HOLD"});
     var openAttention=data.items.filter(function(x){return x.category==="CLIENT_ATTENTION"});
     var collections=data.items.filter(function(x){return x.category==="COLLECTION"});
-    var followups=data.items.filter(function(x){return x.category==="FOLLOW_UP"});
+    var followups=data.items.filter(function(x){return x.category==="CALL"});
     document.getElementById("statHold").textContent=hold.length;
     document.getElementById("statAttention").textContent=openAttention.length;
     document.getElementById("statCollections").textContent=collections.length;
@@ -229,6 +229,7 @@
     try{b.disabled=true;await api("/dashboard/api/items/"+b.dataset.id+"/resolve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:b.dataset.iresolve})});toast(b.dataset.iresolve==="DONE"?"Marked done":"Dismissed");await load()}catch(err){toast(err.message);b.disabled=false}
   });
   load();
+  setInterval(load,60000);
 })();
 </script>
 </body>
