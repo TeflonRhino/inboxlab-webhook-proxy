@@ -657,7 +657,6 @@
         });
         if(row.status==="no_show"){
           var msg=name+" — no-show";
-          if(marked||x.invitee.no_show||overrideFor(x))msg+="; recorded";
           if(chasedMessage){
             var label=classifyHeartbeat(chasedMessage.detail||"");
             if(label==="follow-up sent with reschedule link")msg+="; followed up with reschedule link";
