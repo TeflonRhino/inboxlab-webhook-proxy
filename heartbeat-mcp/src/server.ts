@@ -11,6 +11,7 @@ const HEARTBEAT_BASE_URL = "https://api.heartbeat.chat/v0";
 const HEARTBEAT_API_KEY = process.env.HEARTBEAT_API_KEY;
 const HEARTBEAT_WEB_TOKEN = process.env.HEARTBEAT_WEB_TOKEN;
 const CALENDLY_ACCESS_TOKEN = process.env.CALENDLY_ACCESS_TOKEN;
+const FATHOM_API_KEY = process.env.FATHOM_API_KEY;
 const MCP_PATH_TOKEN = process.env.MCP_PATH_TOKEN;
 const PORT = Number(process.env.PORT || 3000);
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -853,6 +854,61 @@ app.get("/dashboard/api/eod/context", requireDashboardAuth, async (req, res) => 
       )
     ]);
 
+    let fathom: any = { available: false, meetings: [], error: null };
+    if (FATHOM_API_KEY) {
+      try {
+        const url = new URL("https://api.fathom.ai/external/v1/meetings");
+        url.searchParams.set("created_after", start);
+        url.searchParams.set("created_before", end);
+        url.searchParams.set("include_summary", "true");
+        url.searchParams.set("include_action_items", "true");
+
+        const r = await fetch(url, {
+          headers: { "X-Api-Key": FATHOM_API_KEY, Accept: "application/json" },
+          signal: AbortSignal.timeout(20000)
+        });
+        const body: any = await r.json().catch(() => null);
+        if (!r.ok) {
+          if (r.status === 401 || r.status === 403) throw new Error("Fathom API key is invalid or does not have access");
+          throw new Error(`Fathom meetings lookup failed ${r.status}`);
+        }
+
+        const rawMeetings = Array.isArray(body?.items) ? body.items : [];
+        fathom = {
+          available: true,
+          meetings: rawMeetings.map((m: any) => ({
+            recording_id: m.recording_id || null,
+            title: m.title || m.meeting_title || m.meeting_type || "Fathom meeting",
+            meeting_title: m.meeting_title || null,
+            meeting_type: m.meeting_type || null,
+            url: m.url || m.share_url || null,
+            meeting_url: m.meeting_url || null,
+            created_at: m.created_at || null,
+            scheduled_start_time: m.scheduled_start_time || null,
+            scheduled_end_time: m.scheduled_end_time || null,
+            recording_start_time: m.recording_start_time || null,
+            recording_end_time: m.recording_end_time || null,
+            calendar_invitees: Array.isArray(m.calendar_invitees) ? m.calendar_invitees.map((i: any) => ({
+              name: i?.name || null,
+              email: i?.email || null,
+              is_external: Boolean(i?.is_external)
+            })) : [],
+            summary: m.default_summary?.markdown_formatted || m.summary?.markdown_formatted || m.summary || null,
+            action_items: Array.isArray(m.action_items) ? m.action_items.map((a: any) => ({
+              description: a?.description || null,
+              completed: Boolean(a?.completed),
+              assignee: a?.assignee?.name || null
+            })) : []
+          })),
+          error: null
+        };
+      } catch (err) {
+        fathom = { available: false, meetings: [], error: err instanceof Error ? err.message : "Fathom lookup failed" };
+      }
+    } else {
+      fathom.error = "FATHOM_API_KEY is not configured";
+    }
+
     let calendly: any = { available: false, events: [], error: null };
     if (CALENDLY_ACCESS_TOKEN) {
       try {
@@ -926,7 +982,8 @@ app.get("/dashboard/api/eod/context", requireDashboardAuth, async (req, res) => 
       activity: activityResult.rows,
       actions: actionsResult.rows,
       items: itemsResult.rows,
-      calendly
+      calendly,
+      fathom
     });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to build EOD context" });
