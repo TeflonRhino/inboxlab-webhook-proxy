@@ -82,13 +82,15 @@ function buildServer() {
   server.registerTool("list_heartbeat_channels", {
     description: "List Heartbeat channels. Read-only.",
     inputSchema: z.object({}),
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    securitySchemes: [{ type: "noauth" }]
   }, async () => textResult({ channels: await listChannels() }));
 
   server.registerTool("find_client_chat", {
     description: "Find a client's dedicated Heartbeat CHAT channel by name. Read-only.",
     inputSchema: z.object({ name: z.string().min(1) }),
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    securitySchemes: [{ type: "noauth" }]
   }, async ({ name }) => textResult({ query: name, matches: await findChatChannels(name) }));
 
   server.registerTool("get_chat_messages", {
@@ -97,7 +99,8 @@ function buildServer() {
       channel_id: z.string().uuid(),
       max_messages: z.number().int().min(1).max(2000).default(500)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    securitySchemes: [{ type: "noauth" }]
   }, async ({ channel_id, max_messages }) => {
     const messages = await getChatHistory(channel_id, max_messages);
     return textResult({ channel_id, count: messages.length, messages });
@@ -109,7 +112,8 @@ function buildServer() {
       name: z.string().min(1),
       max_messages: z.number().int().min(1).max(2000).default(500)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    securitySchemes: [{ type: "noauth" }]
   }, async ({ name, max_messages }) => {
     const matches = await findChatChannels(name);
     if (matches.length === 0) return textResult({ name, found: false, message: "No matching CHAT channel found." });
