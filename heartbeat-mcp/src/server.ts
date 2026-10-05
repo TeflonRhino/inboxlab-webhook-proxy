@@ -12,6 +12,7 @@ const HEARTBEAT_API_KEY = process.env.HEARTBEAT_API_KEY;
 const HEARTBEAT_WEB_TOKEN = process.env.HEARTBEAT_WEB_TOKEN;
 const CALENDLY_ACCESS_TOKEN = process.env.CALENDLY_ACCESS_TOKEN;
 const FATHOM_API_KEY = process.env.FATHOM_API_KEY;
+const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
 const MCP_PATH_TOKEN = process.env.MCP_PATH_TOKEN;
 const PORT = Number(process.env.PORT || 3000);
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -1065,16 +1066,46 @@ app.post("/dashboard/api/eod/send", requireDashboardAuth, async (req, res) => {
   try {
     const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
     if (!message) return res.status(400).json({ error: "EOD report is empty" });
-    await ensureOpsTables();
-    const result = await pool!.query(
-      `INSERT INTO dashboard_actions (action_type,payload,status,requested_by)
-       VALUES ('SEND_EOD_SLACK',$1::jsonb,'PENDING','Dave') RETURNING *`,
-      [JSON.stringify({ channel_id: "C0BEJ7304QJ", channel_name: "3-csm-eod-reports", message })]
-    );
-    await logActivity({ eventType: "dashboard_action_requested", title: "EOD Slack send approved", detail: message.slice(0,1000), entityType: "dashboard_action", entityId: result.rows[0].id, actor: "Dave" });
-    res.json({ queued: true, action: result.rows[0] });
+    if (!SLACK_BOT_TOKEN) {
+      return res.status(503).json({ error: "SLACK_BOT_TOKEN is not configured in Render, so the EOD cannot be sent yet." });
+    }
+
+    const slackResponse = await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
+        "Content-Type": "application/json; charset=utf-8"
+      },
+      body: JSON.stringify({
+        channel: "C0BEJ7304QJ",
+        text: message,
+        mrkdwn: true
+      }),
+      signal: AbortSignal.timeout(15000)
+    });
+
+    const slackBody: any = await slackResponse.json().catch(() => null);
+    if (!slackResponse.ok || !slackBody?.ok) {
+      const code = slackBody?.error || `HTTP ${slackResponse.status}`;
+      return res.status(502).json({ error: `Slack send failed: ${code}` });
+    }
+
+    await logActivity({
+      eventType: "eod_slack_sent",
+      title: "EOD report sent to Slack",
+      detail: message.slice(0,1000),
+      entityType: "slack_message",
+      entityId: slackBody.ts || null,
+      actor: "Dave"
+    });
+
+    res.json({
+      sent: true,
+      channel_id: "C0BEJ7304QJ",
+      message_ts: slackBody.ts || null
+    });
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to queue EOD send" });
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to send EOD to Slack" });
   }
 });
 
