@@ -414,9 +414,6 @@
       }
 
       var booked=eventInvitees.length;
-      var noShows=eventInvitees.filter(hasNoShowSignal).length;
-      var rescheduled=eventInvitees.filter(function(x){return !!x.invitee.rescheduled||!!x.invitee.old_invitee}).length;
-      var canceled=eventInvitees.filter(function(x){return x.invitee.status==="canceled"||x.event.status==="canceled"}).length;
 
       function meetingMatchesInvitee(m,x){
         var n=normaliseEod(inviteeName(x));
@@ -427,16 +424,25 @@
             (i.email&&x.invitee.email&&String(i.email).toLowerCase()===String(x.invitee.email).toLowerCase());
         });
       }
-      var matchedMeetingIds=Object.create(null);
-      fathomMeetings.forEach(function(m){
-        if(eventInvitees.some(function(x){return meetingMatchesInvitee(m,x)})){
-          matchedMeetingIds[String(m.recording_id||m.url||m.title)]=true;
-        }
-      });
-      var matchedTaken=Object.keys(matchedMeetingIds).length;
-      var likelyTaken=fathomMeetings.length?matchedTaken:eventInvitees.filter(function(x){
-        return x.event.status==="active" && x.invitee.status!=="canceled" && !hasNoShowSignal(x) && new Date(x.event.end_time||0)<=now;
-      }).length;
+
+      function bookingStatus(x){
+        var canceled=x.invitee.status==="canceled"||x.event.status==="canceled";
+        if(canceled)return "canceled";
+        var rescheduled=!!x.invitee.rescheduled||!!x.invitee.old_invitee||!!x.invitee.new_invitee;
+        if(rescheduled)return "rescheduled";
+        var taken=fathomMeetings.some(function(m){return meetingMatchesInvitee(m,x)});
+        if(taken)return "taken";
+        if(hasNoShowSignal(x))return "no_show";
+        var ended=new Date(x.event.end_time||0)<=now;
+        if(ended)return "no_show";
+        return "upcoming";
+      }
+
+      var bookingStatuses=eventInvitees.map(function(x){return {x:x,status:bookingStatus(x)}});
+      var likelyTaken=bookingStatuses.filter(function(r){return r.status==="taken"}).length;
+      var noShows=bookingStatuses.filter(function(r){return r.status==="no_show"}).length;
+      var canceled=bookingStatuses.filter(function(r){return r.status==="canceled"}).length;
+      var rescheduled=bookingStatuses.filter(function(r){return r.status==="rescheduled"}).length;
 
       function typeCount(rx){
         return eventInvitees.filter(function(x){return rx.test(String(x.event.name||""))}).length;
@@ -537,7 +543,10 @@
           out="Call completed";
         }
 
-        out=String(out).replace(/\s+/g," ").trim();
+        out=String(out)
+          .replace(/\b(?:Next Steps?|Inbox Management(?:\s*&\s*Personalization)?|Key Takeaways|Action Items?)\.?\s*$/i,"")
+          .replace(/\s+/g," ")
+          .trim();
         if(out.length>220)out=out.slice(0,217).replace(/[,:;\-\s]+$/,"")+"…";
         return out.charAt(0).toUpperCase()+out.slice(1)+(out.endsWith(".")?"":".");
       }
@@ -588,17 +597,16 @@
         if(next.length)text+=" Next: "+next.join("; ");
         addWork(work,text);
       });
-      eventInvitees.forEach(function(x){
-        var name=inviteeName(x);
+      bookingStatuses.forEach(function(row){
+        var x=row.x,name=inviteeName(x);
         var chased=heartbeat.some(function(h){return normaliseEod(h.client_name)===normaliseEod(name)});
         var marked=noShowActions.some(function(a){return normaliseEod(a.payload&&a.payload.client_name)===normaliseEod(name)});
-        if(hasNoShowSignal(x)){
+        if(row.status==="no_show"){
           var msg=name+" — no-show";
           if(marked||x.invitee.no_show)msg+="; recorded";
           if(chased)msg+="; chased in Heartbeat";
-          if(x.invitee.rescheduled||x.invitee.new_invitee)msg+="; rescheduled";
           addWork(work,msg);
-        }else if(x.invitee.rescheduled||x.invitee.old_invitee){
+        }else if(row.status==="rescheduled"){
           addWork(work,name+" — rescheduled call");
         }
       });
