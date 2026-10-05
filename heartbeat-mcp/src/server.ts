@@ -823,6 +823,116 @@ app.get("/dashboard/api/overview", requireDashboardAuth, async (_req, res) => {
 });
 
 
+app.get("/dashboard/api/eod/context", requireDashboardAuth, async (req, res) => {
+  try {
+    await ensureOpsTables();
+    const start = typeof req.query.start === "string" ? req.query.start : "";
+    const end = typeof req.query.end === "string" ? req.query.end : "";
+    if (!start || !end || Number.isNaN(Date.parse(start)) || Number.isNaN(Date.parse(end))) {
+      return res.status(400).json({ error: "Valid start and end timestamps are required" });
+    }
+
+    const [activityResult, actionsResult, itemsResult] = await Promise.all([
+      pool!.query(
+        `SELECT * FROM dashboard_activity WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz ORDER BY created_at ASC`,
+        [start, end]
+      ),
+      pool!.query(
+        `SELECT * FROM dashboard_actions
+         WHERE (created_at >= $1::timestamptz AND created_at < $2::timestamptz)
+            OR (completed_at >= $1::timestamptz AND completed_at < $2::timestamptz)
+         ORDER BY created_at ASC`,
+        [start, end]
+      ),
+      pool!.query(
+        `SELECT * FROM dashboard_items
+         WHERE created_at < $2::timestamptz
+           AND (updated_at >= $1::timestamptz OR due_at >= $1::timestamptz)
+         ORDER BY updated_at ASC`,
+        [start, end]
+      )
+    ]);
+
+    let calendly: any = { available: false, events: [], error: null };
+    if (CALENDLY_ACCESS_TOKEN) {
+      try {
+        const headers = { Authorization: `Bearer ${CALENDLY_ACCESS_TOKEN}`, Accept: "application/json" };
+        const meResponse = await fetch("https://api.calendly.com/users/me", { headers, signal: AbortSignal.timeout(15000) });
+        const meBody: any = await meResponse.json().catch(() => null);
+        if (!meResponse.ok || !meBody?.resource?.uri) throw new Error(`Calendly user lookup failed ${meResponse.status}`);
+
+        async function getEvents(status: "active" | "canceled") {
+          const url = new URL("https://api.calendly.com/scheduled_events");
+          url.searchParams.set("user", meBody.resource.uri);
+          url.searchParams.set("status", status);
+          url.searchParams.set("min_start_time", start);
+          url.searchParams.set("max_start_time", end);
+          url.searchParams.set("count", "100");
+          url.searchParams.set("sort", "start_time:asc");
+          const r = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+          const body: any = await r.json().catch(() => null);
+          if (!r.ok) throw new Error(`Calendly events lookup failed ${r.status}`);
+          return Array.isArray(body?.collection) ? body.collection : [];
+        }
+
+        const [activeEvents, canceledEvents] = await Promise.all([getEvents("active"), getEvents("canceled")]);
+        const rawEvents = [...activeEvents, ...canceledEvents];
+
+        const events = await Promise.all(rawEvents.map(async (event: any) => {
+          const eventId = String(event?.uri || "").split("/").filter(Boolean).pop();
+          let invitees: any[] = [];
+          if (eventId) {
+            try {
+              const url = new URL(`https://api.calendly.com/scheduled_events/${eventId}/invitees`);
+              url.searchParams.set("count", "100");
+              const r = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+              const body: any = await r.json().catch(() => null);
+              if (r.ok && Array.isArray(body?.collection)) invitees = body.collection;
+            } catch {}
+          }
+          return {
+            uri: event?.uri || null,
+            name: event?.name || "Calendly meeting",
+            status: event?.status || null,
+            start_time: event?.start_time || null,
+            end_time: event?.end_time || null,
+            event_type: event?.event_type || null,
+            invitees: invitees.map((i: any) => ({
+              uri: i?.uri || null,
+              name: i?.name || null,
+              email: i?.email || null,
+              status: i?.status || null,
+              rescheduled: Boolean(i?.rescheduled),
+              old_invitee: i?.old_invitee || null,
+              new_invitee: i?.new_invitee || null,
+              no_show: i?.no_show || null,
+              cancellation: i?.cancellation || null,
+              created_at: i?.created_at || null,
+              updated_at: i?.updated_at || null
+            }))
+          };
+        }));
+
+        calendly = { available: true, events, error: null };
+      } catch (err) {
+        calendly = { available: false, events: [], error: err instanceof Error ? err.message : "Calendly lookup failed" };
+      }
+    } else {
+      calendly.error = "CALENDLY_ACCESS_TOKEN is not configured";
+    }
+
+    res.json({
+      window: { start, end },
+      activity: activityResult.rows,
+      actions: actionsResult.rows,
+      items: itemsResult.rows,
+      calendly
+    });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to build EOD context" });
+  }
+});
+
 app.post("/dashboard/api/eod/send", requireDashboardAuth, async (req, res) => {
   try {
     const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
