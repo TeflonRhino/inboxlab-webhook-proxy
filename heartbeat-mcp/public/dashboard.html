@@ -419,9 +419,13 @@
             (i.email&&x.invitee.email&&String(i.email).toLowerCase()===String(x.invitee.email).toLowerCase());
         });
       }
-      var matchedTaken=eventInvitees.filter(function(x){
-        return fathomMeetings.some(function(m){return meetingMatchesInvitee(m,x)});
-      }).length;
+      var matchedMeetingIds=Object.create(null);
+      fathomMeetings.forEach(function(m){
+        if(eventInvitees.some(function(x){return meetingMatchesInvitee(m,x)})){
+          matchedMeetingIds[String(m.recording_id||m.url||m.title)]=true;
+        }
+      });
+      var matchedTaken=Object.keys(matchedMeetingIds).length;
       var likelyTaken=fathomMeetings.length?matchedTaken:eventInvitees.filter(function(x){
         return x.event.status==="active" && x.invitee.status!=="canceled" && !hasNoShowSignal(x) && new Date(x.event.end_time||0)<=now;
       }).length;
@@ -452,13 +456,28 @@
         var t=String(s||"");
         t=t.replace(/\[([^\]]+)\]\([^\)]+\)/g,"$1");
         t=t.replace(/https?:\/\/\S+/g,"");
+        t=t.replace(/\\([#$%&*_{}<>])/g,"$1");
         t=t.replace(/[#*_>\`~]+/g," ");
         t=t.replace(/\s+/g," ").trim();
-        t=t.replace(/^Meeting Purpose\s*/i,"").replace(/^Key Takeaways\s*/i,"");
         if(!t)return "";
-        var cut=t.search(/\bNext(?: Steps?)?:/i);
-        if(cut>40)t=t.slice(0,cut).trim();
-        return t.length>170?t.slice(0,167).replace(/[,:;\-\s]+$/,"")+"…":t;
+
+        var purpose="", takeaway="";
+        var purposeMatch=t.match(/Meeting Purpose\s+(.+?)(?=\s+Key Takeaways\b|$)/i);
+        if(purposeMatch)purpose=purposeMatch[1].trim();
+
+        var takeawayMatch=t.match(/Key Takeaways\s*[-:]?\s*(.+)$/i);
+        if(takeawayMatch){
+          var k=takeawayMatch[1].trim();
+          k=k.replace(/^[-•*\s]+/,"");
+          k=k.replace(/^[A-Za-z][A-Za-z &\/\-]{1,45}:\s*/,"");
+          var sentence=k.match(/^(.+?[.!?])(?:\s|$)/);
+          takeaway=(sentence?sentence[1]:k).trim();
+        }
+
+        var out=purpose;
+        if(takeaway && normaliseEod(takeaway)!==normaliseEod(purpose))out+=(out?" ":"")+takeaway;
+        if(!out)out=t.replace(/^Meeting Purpose\s*/i,"").replace(/\s+Key Takeaways.*$/i,"").trim();
+        return out.length>220?out.slice(0,217).replace(/[,:;\-\s]+$/,"")+"…":out;
       }
       function calendlyNameForEmail(email){
         if(!email)return "";
@@ -469,22 +488,29 @@
         }
         return "";
       }
+      function prettyPersonName(name){
+        var s=String(name||"").trim();
+        if(!s)return s;
+        if(s.indexOf("@")>=0)return s;
+        if(s===s.toLowerCase())return s.replace(/\b\w/g,function(ch){return ch.toUpperCase()});
+        return s;
+      }
       function meetingPerson(m){
         var ext=(m.calendar_invitees||[]).find(function(i){return i&&i.is_external&&(i.name||i.email)});
         if(ext){
-          if(ext.name&&String(ext.name).indexOf("@")<0)return ext.name;
           var matched=calendlyNameForEmail(ext.email||ext.name);
-          if(matched)return matched;
+          if(matched)return prettyPersonName(matched);
+          if(ext.name&&String(ext.name).indexOf("@")<0)return prettyPersonName(ext.name);
           return ext.name||ext.email;
         }
         var named=(m.calendar_invitees||[]).find(function(i){return i&&(i.name||i.email)});
         if(named){
-          if(named.name&&String(named.name).indexOf("@")<0)return named.name;
           var matched2=calendlyNameForEmail(named.email||named.name);
-          if(matched2)return matched2;
+          if(matched2)return prettyPersonName(matched2);
+          if(named.name&&String(named.name).indexOf("@")<0)return prettyPersonName(named.name);
           return named.name||named.email;
         }
-        return m.title||m.meeting_title||"Client call";
+        return prettyPersonName(m.title||m.meeting_title||"Client call");
       }
       function cleanAction(s){
         var t=String(s||"").replace(/\[([^\]]+)\]\([^\)]+\)/g,"$1").replace(/https?:\/\/\S+/g,"").replace(/[\n\r\t]+/g," ").replace(/\s+/g," ").trim();
