@@ -28,7 +28,7 @@
 .workspace{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);gap:12px}.panel{background:#fff;border:1px solid var(--line);border-radius:16px;padding:15px;min-width:0}
 .queue,.stack{display:grid;gap:9px}.queue-card,.item-card{border:1px solid var(--line);border-radius:14px;padding:13px;background:#fff}.qtop,.itop{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.client{font-size:14px;font-weight:820}.meta{font-size:11px;color:var(--muted);margin-top:3px}
 .preview{font-size:13px;line-height:1.5;margin-top:10px;color:#374151}.draft{width:100%;margin-top:10px;min-height:95px;resize:vertical;border:1px solid var(--line);background:var(--soft);border-radius:11px;padding:10px;line-height:1.45;color:var(--ink)}
-.draft:focus{outline:none;border-color:#94a3b8;box-shadow:0 0 0 3px rgba(148,163,184,.18)}.reason{font-size:11px;color:#6b7280;margin-top:7px}.actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.draft:focus{outline:none;border-color:#94a3b8;box-shadow:0 0 0 3px rgba(148,163,184,.18)}.reason{font-size:11px;color:#6b7280;margin-top:7px}.channel-warning{margin-top:10px;border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:11px;padding:10px}.channel-warning b{display:block;font-size:12px;margin-bottom:5px}.channel-row{display:flex;gap:6px;margin-top:8px}.channel-input{flex:1;min-width:0;border:1px solid #fdba74;border-radius:9px;padding:8px 9px;background:#fff}.actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 .priority{font-size:9px;font-weight:850;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:4px 7px}.priority.URGENT{background:var(--redbg);color:var(--red)}.priority.HIGH{background:var(--amberbg);color:var(--amber)}.priority.NORMAL{background:var(--bluebg);color:var(--blue)}.priority.LOW{background:#f3f4f6;color:#6b7280}
 .item-title{font-size:13px;font-weight:800}.item-summary{font-size:12px;line-height:1.45;color:#4b5563;margin-top:7px}.item-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:9px;color:#9ca3af;font-size:10px}
 .activity{display:grid}.activity-row{display:grid;grid-template-columns:24px minmax(0,1fr);gap:9px;padding:10px 0;border-bottom:1px solid #f3f4f6}.activity-row:last-child{border-bottom:0}.activity-icon{width:24px;height:24px;border-radius:8px;background:#f3f4f6;display:grid;place-items:center;font-size:11px}.activity-title{font-size:12px;font-weight:760}.activity-detail{font-size:11px;color:#6b7280;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.activity-time{font-size:10px;color:#9ca3af;margin-top:3px}
@@ -127,15 +127,17 @@
   function empty(title,text){return '<div class="empty"><b>'+esc(title)+'</b>'+esc(text)+'</div>'}
   function qCard(x,compact){
     var editable=x.status==="HOLD"||x.status==="APPROVED";
+    var missing=!x.channel_id;
     var actions=compact?"":'<div class="actions">'+
       (editable?'<button class="btn" data-qaction="save" data-id="'+x.id+'">Save edit</button>':'')+
-      (x.status==="HOLD"?'<button class="btn blue" data-qaction="approve" data-id="'+x.id+'">Approve</button><button class="btn primary" data-qaction="approve_send" data-id="'+x.id+'">Approve &amp; Send</button>':'')+
-      (x.status==="APPROVED"?'<button class="btn primary" data-qaction="post" data-id="'+x.id+'">Post to Heartbeat</button>':'')+
+      (x.status==="HOLD"?'<button class="btn blue" data-qaction="approve" data-id="'+x.id+'" '+(missing?'disabled':'')+'>Approve</button><button class="btn primary" data-qaction="approve_send" data-id="'+x.id+'" '+(missing?'disabled':'')+'>Approve &amp; Send</button>':'')+
+      (x.status==="APPROVED"?'<button class="btn primary" data-qaction="post" data-id="'+x.id+'" '+(missing?'disabled':'')+'>Post to Heartbeat</button>':'')+
       ((x.status==="HOLD"||x.status==="APPROVED")?'<button class="btn red" data-qaction="skip" data-id="'+x.id+'">Skip</button>':'')+
       '</div>';
-    return '<article class="queue-card" data-qcard="'+x.id+'"><div class="qtop"><div><div class="client">'+esc(x.client_name)+'</div><div class="meta">#'+x.id+' · '+fmt(x.created_at)+'</div></div><span class="pill '+String(x.status).toLowerCase()+'">'+esc(x.status)+'</span></div>'+
+    var warning=missing?'<div class="channel-warning"><b>Needs Heartbeat Chat</b><div>This client\'s chat was not live when the draft was created. Paste the Heartbeat chat URL below once it exists.</div><div class="channel-row"><input class="channel-input" placeholder="Paste Heartbeat chat URL" data-channel-input="'+x.id+'"><button class="btn" data-qaction="attach_channel" data-id="'+x.id+'">Attach chat</button></div></div>':'';
+    return '<article class="queue-card" data-qcard="'+x.id+'"><div class="qtop"><div><div class="client">'+esc(x.client_name)+'</div><div class="meta">#'+x.id+' · '+fmt(x.created_at)+(missing?' · Needs chat':'')+'</div></div><span class="pill '+(missing?'hold':String(x.status).toLowerCase())+'">'+(missing?'NEEDS CHAT':esc(x.status))+'</span></div>'+
       (compact?'<div class="preview">'+esc(x.draft)+'</div>':'<textarea class="draft" '+(editable?'':'disabled')+'>'+esc(x.draft)+'</textarea>')+
-      (x.reason?'<div class="reason">Why: '+esc(x.reason)+'</div>':'')+actions+'</article>';
+      (x.reason?'<div class="reason">Why: '+esc(x.reason)+'</div>':'')+warning+actions+'</article>';
   }
   function itemCard(x,showCategory){
     return '<article class="item-card" data-item="'+x.id+'"><div class="itop"><div><div class="item-title">'+esc(x.title)+'</div><div class="meta">'+(x.client_name?esc(x.client_name)+' · ':'')+(showCategory?esc(labelCategory(x.category))+' · ':'')+esc(x.source||"ChatGPT")+'</div></div><span class="priority '+esc(x.priority)+'">'+esc(x.priority)+'</span></div>'+
@@ -208,6 +210,7 @@
     var b=e.target.closest("[data-qaction]");if(!b)return;var id=Number(b.dataset.id),act=b.dataset.qaction,card=document.querySelector('[data-qcard="'+id+'"]');
     try{
       b.disabled=true;
+      if(act==="attach_channel"){var input=card.querySelector('[data-channel-input="'+id+'"]');var url=input?input.value.trim():"";if(!url)throw new Error("Paste the Heartbeat chat URL first");await api("/dashboard/api/hold-queue/"+id+"/attach-channel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:url})});toast("Heartbeat chat attached");}
       if(act==="save"){var draft=card.querySelector("textarea").value.trim();if(!draft)throw new Error("Draft cannot be empty");await api("/dashboard/api/hold-queue/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({draft:draft})});toast("Draft saved — approval reset");}
       if(act==="approve"){await api("/dashboard/api/hold-queue/"+id+"/approve",{method:"POST"});toast("Approved — still not sent");}
       if(act==="approve_send"){
