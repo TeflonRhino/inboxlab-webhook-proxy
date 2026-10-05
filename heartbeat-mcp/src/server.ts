@@ -404,15 +404,6 @@ function buildServer() {
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     securitySchemes: [{ type: "noauth" }]
   }, async ({ name, max_messages }) => {
-    if (normalise(name) === "__pending_heartbeat__") {
-      let command: any;
-      try { command = JSON.parse(draft); } catch { throw new Error("Pending Heartbeat command must be valid JSON"); }
-      const clientName = String(command.client_name || "").trim();
-      const message = String(command.draft || "").trim();
-      if (!clientName || !message) throw new Error("client_name and draft are required");
-      const item = await queuePendingHeartbeatReply(clientName, message, command.reason ? String(command.reason) : reason);
-      return textResult({ queued: true, pending_channel: true, item });
-    }
     if (normalise(name) === "__dashboard__") {
       const [queue, items, activity] = await Promise.all([listQueue(), listDashboardItems(undefined, "OPEN"), listActivity(Math.min(max_messages, 200))]);
       return textResult({ dashboard: true, queue, items, activity });
@@ -446,6 +437,15 @@ function buildServer() {
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     securitySchemes: [{ type: "noauth" }]
   }, async ({ name, draft, reason }) => {
+    if (normalise(name) === "__pending_heartbeat__") {
+      let command: any;
+      try { command = JSON.parse(draft); } catch { throw new Error("Pending Heartbeat command must be valid JSON"); }
+      const clientName = String(command.client_name || "").trim();
+      const message = String(command.draft || "").trim();
+      if (!clientName || !message) throw new Error("client_name and draft are required");
+      const item = await queuePendingHeartbeatReply(clientName, message, command.reason ? String(command.reason) : reason);
+      return textResult({ queued: true, pending_channel: true, item });
+    }
     if (normalise(name) === "__dashboard__") {
       let command: any;
       try { command = JSON.parse(draft); } catch { throw new Error("Dashboard command must be valid JSON"); }
