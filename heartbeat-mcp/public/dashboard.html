@@ -479,26 +479,58 @@
       function outcomeFromMeeting(m){
         var parsed=cleanSummary(m.summary);
         var p=String(parsed.purpose||"").replace(/\.$/,"").trim();
-        var k=String(parsed.takeaway||"").replace(/\.$/,"").trim();
-        var hay=normaliseEod((parsed.raw||"")+" "+p+" "+k);
-        var out="";
+        var raw=String(parsed.raw||"");
+        var hay=normaliseEod(raw+" "+p);
 
-        if(/refund/.test(hay) && /approved|processed|received|confirmed/.test(hay)){
-          out=k||p;
-        }else if(/blocked|failure|failed|declined|issue|problem|risk/.test(hay)){
-          out=k||p;
-        }else if(/budget|cost|pricing|financial/.test(hay) && /delay|pause|concern|shock|buffer/.test(hay)){
-          out=k||p;
-        }else if(/purchased|ordered|completed|launched|built|set up|setup/.test(hay)){
-          out=k||p;
-        }else if(k){
-          out=k;
-        }else if(p){
-          out=p;
+        var bullets=[];
+        var keyMatch=raw.match(/Key Takeaways\s*[-:]?\s*(.+)$/i);
+        if(keyMatch){
+          var body=keyMatch[1]
+            .replace(/\\([#$%&*_{}<>])/g,"$1")
+            .replace(/\[([^\]]+)\]\([^\)]+\)/g,"$1")
+            .replace(/https?:\/\/\S+/g," ");
+          bullets=body.split(/\s+-\s+|\s+\*\s+|\s+•\s+/).map(function(x){
+            return x.replace(/^[A-Za-z][A-Za-z &\/\-]{1,45}:\s*/,"").replace(/\s+/g," ").trim();
+          }).filter(Boolean);
         }
 
-        if(!out)out="Call completed";
-        out=out.replace(/^(the )?/i,function(x){return x});
+        function scoreBullet(b){
+          var t=normaliseEod(b),score=0;
+          if(/approved|processed|received|refunded|refund/.test(t))score+=10;
+          if(/blocked|halted|declined|failed|failure|issue/.test(t))score+=9;
+          if(/delay|pause|postpone|until february|until march|savings buffer/.test(t))score+=9;
+          if(/purchased|ordered|built|created|completed|launched|live/.test(t))score+=8;
+          if(/low reputation|spam risk|removed from campaign|rewarm|re warm/.test(t))score+=8;
+          if(/agreed|decided|will continue|will notify|path forward/.test(t))score+=7;
+          if(/goal|primary goal|motivation|upcoming birth|diversify income/.test(t))score-=5;
+          return score;
+        }
+
+        var best="";
+        if(bullets.length){
+          bullets.sort(function(a,b){return scoreBullet(b)-scoreBullet(a)});
+          best=bullets[0]||"";
+        }
+
+        var out="";
+        if(/\bonboard/.test(normaliseEod(p))){
+          out="Onboarding completed and initial setup game plan agreed";
+        }else if(/refund/.test(hay) && /approved|processed|received|confirmed/.test(hay)){
+          out=best||"Refund outcome confirmed";
+        }else if(/budget|cost|pricing|financial/.test(hay) && /delay|pause|buffer|february|march/.test(hay)){
+          out=best||"Budget concerns addressed and next steps agreed";
+        }else if(/blocked|failure|failed|declined|issue|problem/.test(hay)){
+          out=best||p;
+        }else if(best && scoreBullet(best)>0){
+          out=best;
+        }else if(p){
+          out=p;
+        }else{
+          out="Call completed";
+        }
+
+        out=String(out).replace(/\s+/g," ").trim();
+        if(out.length>220)out=out.slice(0,217).replace(/[,:;\-\s]+$/,"")+"…";
         return out.charAt(0).toUpperCase()+out.slice(1)+(out.endsWith(".")?"":".");
       }
       function calendlyNameForEmail(email){
