@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 
 const HEARTBEAT_BASE_URL = "https://api.heartbeat.chat/v0";
 const HEARTBEAT_API_KEY = process.env.HEARTBEAT_API_KEY;
+const HEARTBEAT_WEB_TOKEN = process.env.HEARTBEAT_WEB_TOKEN;
 const MCP_PATH_TOKEN = process.env.MCP_PATH_TOKEN;
 const PORT = Number(process.env.PORT || 3000);
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -163,6 +164,7 @@ async function createDashboardItem(input: {
 }
 
 async function sendHeartbeatMessage(channelID: string, text: string) {
+  if (!HEARTBEAT_WEB_TOKEN) throw new Error("HEARTBEAT_WEB_TOKEN is required to send Heartbeat messages");
   const message = text.trim();
   if (!message) throw new Error("Heartbeat message cannot be empty");
 
@@ -176,7 +178,7 @@ async function sendHeartbeatMessage(channelID: string, text: string) {
   const response = await fetch("https://api.heartbeat.chat/trpc/createChatMessage?batch=1", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${HEARTBEAT_API_KEY}`,
+      Authorization: `Bearer ${HEARTBEAT_WEB_TOKEN}`,
       Accept: "application/json",
       "Content-Type": "application/json"
     },
