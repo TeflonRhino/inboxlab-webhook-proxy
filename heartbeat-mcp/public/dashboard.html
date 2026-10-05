@@ -146,7 +146,14 @@
       <textarea class="draft" id="eodDraft" style="min-height:360px" placeholder="Generate the report, then edit or add anything you want before sending."></textarea>
       <div class="actions"><button class="btn primary" id="sendEod">Approve &amp; Send to #3-csm-eod-reports</button></div>
     </div>
-    <div class="panel"><div class="section-head"><h2>Before you send</h2></div><div id="eodChecks" class="stack"></div></div>
+    <div class="panel">
+      <div class="section-head"><h2>Before you send</h2></div>
+      <div id="eodChecks" class="stack"></div>
+      <div class="section" style="margin-top:16px">
+        <div class="section-head"><h2>Calls for this day</h2><span class="pill">Review attendance</span></div>
+        <div id="eodCallReview" class="stack"></div>
+      </div>
+    </div>
   </div>
 </section>
 <section id="view-activity" class="hidden"><div class="section-head"><h2>Activity Log</h2><span class="pill">Audit trail</span></div><div class="panel"><div class="activity" id="activityList"></div></div></section>
@@ -371,7 +378,7 @@
       var localStart=new Date(base.getFullYear(),base.getMonth(),base.getDate(),0,0,0,0);
       var localEnd=new Date(base.getFullYear(),base.getMonth(),base.getDate()+1,0,0,0,0);
       var ctx=await api("/dashboard/api/eod/context?start="+encodeURIComponent(localStart.toISOString())+"&end="+encodeURIComponent(localEnd.toISOString()));
-      var activity=ctx.activity||[],actions=ctx.actions||[],items=ctx.items||[],events=(ctx.calendly&&ctx.calendly.events)||[],fathomMeetings=(ctx.fathom&&ctx.fathom.meetings)||[];
+      var activity=ctx.activity||[],actions=ctx.actions||[],items=ctx.items||[],events=(ctx.calendly&&ctx.calendly.events)||[],fathomMeetings=(ctx.fathom&&ctx.fathom.meetings)||[],callOverrides=ctx.call_overrides||[];
 
       function isNoiseText(s){
         var t=normaliseEod(s);
@@ -425,7 +432,13 @@
         });
       }
 
+      function overrideFor(x){
+        var uri=String(x.invitee.uri||"");
+        return callOverrides.find(function(o){return String(o.calendly_invitee_uri||"")===uri})||null;
+      }
       function bookingStatus(x){
+        var override=overrideFor(x);
+        if(override&&override.status==="NO_SHOW")return "no_show";
         var canceled=x.invitee.status==="canceled"||x.event.status==="canceled";
         if(canceled)return "canceled";
         var rescheduled=!!x.invitee.rescheduled||!!x.invitee.old_invitee||!!x.invitee.new_invitee;
@@ -434,7 +447,7 @@
         if(taken)return "taken";
         if(hasNoShowSignal(x))return "no_show";
         var ended=new Date(x.event.end_time||0)<=now;
-        if(ended)return "no_show";
+        if(ended)return "possible_no_show";
         return "upcoming";
       }
 
@@ -443,6 +456,7 @@
       var noShows=bookingStatuses.filter(function(r){return r.status==="no_show"}).length;
       var canceled=bookingStatuses.filter(function(r){return r.status==="canceled"}).length;
       var rescheduled=bookingStatuses.filter(function(r){return r.status==="rescheduled"}).length;
+      var possibleNoShows=bookingStatuses.filter(function(r){return r.status==="possible_no_show"}).length;
 
       function typeCount(rx){
         return eventInvitees.filter(function(x){return rx.test(String(x.event.name||""))}).length;
@@ -603,7 +617,7 @@
         var marked=noShowActions.some(function(a){return normaliseEod(a.payload&&a.payload.client_name)===normaliseEod(name)});
         if(row.status==="no_show"){
           var msg=name+" — no-show";
-          if(marked||x.invitee.no_show)msg+="; recorded";
+          if(marked||x.invitee.no_show||overrideFor(x))msg+="; recorded";
           if(chased)msg+="; chased in Heartbeat";
           addWork(work,msg);
         }else if(row.status==="rescheduled"){
@@ -667,7 +681,7 @@
       draft.value=lines.join("\n");
 
       var checks=[];
-      checks.push('<div class="item-card"><div class="item-title">'+booked+' Calendly booking(s) found today</div><div class="item-summary">'+likelyTaken+' likely taken · '+noShows+' no-show · '+rescheduled+' rescheduled · '+canceled+' cancelled.</div></div>');
+      checks.push('<div class="item-card"><div class="item-title">'+booked+' Calendly booking(s) found</div><div class="item-summary">'+likelyTaken+' taken · '+noShows+' marked no-show · '+possibleNoShows+' possible no-show · '+rescheduled+' rescheduled · '+canceled+' cancelled.</div></div>');
       checks.push('<div class="item-card"><div class="item-title">'+heartbeat.length+' meaningful Heartbeat message(s) sent from the Command Centre</div><div class="item-summary">Test messages and reminder-card noise are excluded.</div></div>');
       if(ctx.calendly&&ctx.calendly.error)checks.push('<div class="item-card"><div class="item-title">Calendly warning</div><div class="item-summary">'+esc(ctx.calendly.error)+'</div></div>');
       if(ctx.fathom&&ctx.fathom.available){
@@ -676,6 +690,23 @@
         checks.push('<div class="item-card"><div class="item-title">Fathom not connected to the dashboard yet</div><div class="item-summary">'+esc((ctx.fathom&&ctx.fathom.error)||"Add FATHOM_API_KEY in Render to confirm calls and enrich outcomes.")+'</div></div>');
       }
       document.getElementById("eodChecks").innerHTML=checks.join("");
+
+      var review=bookingStatuses.map(function(row){
+        var x=row.x,name=inviteeName(x);
+        var startTime="";
+        try{startTime=new Intl.DateTimeFormat("en-GB",{hour:"2-digit",minute:"2-digit"}).format(new Date(x.event.start_time))}catch(e){}
+        var label=row.status==="taken"?"Taken":
+          row.status==="canceled"?"Cancelled":
+          row.status==="rescheduled"?"Rescheduled":
+          row.status==="no_show"?"No Show":
+          row.status==="possible_no_show"?"Possible No Show":"Upcoming";
+        var action="";
+        if(row.status==="possible_no_show"){
+          action='<button class="btn" data-eod-noshow="1" data-client="'+esc(name)+'" data-title="'+esc(x.event.name||"Calendly call")+'" data-start="'+esc(x.event.start_time||"")+'" data-event="'+esc(x.event.uri||"")+'" data-invitee="'+esc(x.invitee.uri||"")+'">Mark No Show</button>';
+        }
+        return '<div class="item-card"><div class="item-title">'+esc(name)+' · '+esc(startTime)+' · '+esc(x.event.name||"Calendly call")+'</div><div class="meta">'+esc(label)+'</div>'+(action?'<div class="actions">'+action+'</div>':'')+'</div>';
+      }).join("");
+      document.getElementById("eodCallReview").innerHTML=review||empty("No calls found","No Calendly bookings were found for this date.");
     }catch(e){
       draft.value="";
       document.getElementById("eodChecks").innerHTML='<div class="item-card"><div class="item-title">Could not generate EOD</div><div class="item-summary">'+esc(e.message)+'</div></div>';
@@ -698,6 +729,27 @@
   }
   document.getElementById("generateEod").addEventListener("click",generateEod);
   document.getElementById("refreshEod").addEventListener("click",generateEod);
+  document.getElementById("eodCallReview").addEventListener("click",async function(e){
+    var b=e.target.closest("[data-eod-noshow]");
+    if(!b)return;
+    if(!confirm("Mark "+b.dataset.client+" as a no-show? This will also queue the Calendly no-show action."))return;
+    try{
+      b.disabled=true;
+      await api("/dashboard/api/eod/no-show",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          client_name:b.dataset.client,
+          call_title:b.dataset.title,
+          call_start_time:b.dataset.start,
+          calendly_event_uri:b.dataset.event,
+          calendly_invitee_uri:b.dataset.invitee
+        })
+      });
+      toast("No-show recorded and Calendly action queued");
+      await generateEod();
+    }catch(err){toast(err.message);b.disabled=false}
+  });
   document.getElementById("sendEod").addEventListener("click",async function(){
     var message=document.getElementById("eodDraft").value.trim();
     if(!message){toast("Generate or write the report first");return}
