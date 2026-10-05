@@ -40,7 +40,8 @@ async function ensureQueueTable() {
     CREATE TABLE IF NOT EXISTS heartbeat_hold_queue (
       id BIGSERIAL PRIMARY KEY,
       client_name TEXT NOT NULL,
-      channel_id UUID NOT NULL,
+      channel_id UUID,
+      channel_url TEXT,
       draft TEXT NOT NULL,
       reason TEXT,
       status TEXT NOT NULL DEFAULT 'HOLD',
@@ -48,7 +49,9 @@ async function ensureQueueTable() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       approved_at TIMESTAMPTZ,
       posted_at TIMESTAMPTZ
-    )
+    );
+    ALTER TABLE heartbeat_hold_queue ALTER COLUMN channel_id DROP NOT NULL;
+    ALTER TABLE heartbeat_hold_queue ADD COLUMN IF NOT EXISTS channel_url TEXT;
   `);
 }
 
@@ -174,6 +177,39 @@ async function queueReply(clientName: string, draft: string, reason?: string) {
   );
   const item = result.rows[0];
   await logActivity({ eventType: "hold_created", title: "Heartbeat draft added to Hold Queue", detail: draft, clientName: channel.name, entityType: "hold_queue", entityId: item.id, actor: "ChatGPT" });
+  return item;
+}
+
+async function queuePendingHeartbeatReply(clientName: string, draft: string, reason?: string) {
+  await ensureQueueTable();
+  const result = await pool!.query(
+    `INSERT INTO heartbeat_hold_queue (client_name, channel_id, channel_url, draft, reason, status)
+     VALUES ($1,NULL,NULL,$2,$3,'HOLD') RETURNING *`,
+    [clientName, draft, reason || null]
+  );
+  const item = result.rows[0];
+  await logActivity({ eventType: "hold_created_pending_channel", title: "Heartbeat draft waiting for chat", detail: draft, clientName, entityType: "hold_queue", entityId: item.id, actor: "ChatGPT" });
+  return item;
+}
+
+function extractHeartbeatChannelId(value: string): string | null {
+  const match = value.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}/);
+  return match ? match[0] : null;
+}
+
+async function attachHeartbeatChannel(id: number, url: string) {
+  await ensureQueueTable();
+  const channelId = extractHeartbeatChannelId(url);
+  if (!channelId) throw new Error("Could not find a Heartbeat channel ID in that URL");
+  const result = await pool!.query(
+    `UPDATE heartbeat_hold_queue
+     SET channel_id=$2, channel_url=$3, status='HOLD', approved_at=NULL, updated_at=NOW()
+     WHERE id=$1 AND status IN ('HOLD','APPROVED') RETURNING *`,
+    [id, channelId, url]
+  );
+  if (!result.rowCount) throw new Error("Queue item must exist and be HOLD or APPROVED");
+  const item = result.rows[0];
+  await logActivity({ eventType: "heartbeat_channel_attached", title: "Heartbeat chat attached to draft", detail: url, clientName: item.client_name, entityType: "hold_queue", entityId: item.id, actor: "Dave" });
   return item;
 }
 
@@ -368,6 +404,15 @@ function buildServer() {
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     securitySchemes: [{ type: "noauth" }]
   }, async ({ name, max_messages }) => {
+    if (normalise(name) === "__pending_heartbeat__") {
+      let command: any;
+      try { command = JSON.parse(draft); } catch { throw new Error("Pending Heartbeat command must be valid JSON"); }
+      const clientName = String(command.client_name || "").trim();
+      const message = String(command.draft || "").trim();
+      if (!clientName || !message) throw new Error("client_name and draft are required");
+      const item = await queuePendingHeartbeatReply(clientName, message, command.reason ? String(command.reason) : reason);
+      return textResult({ queued: true, pending_channel: true, item });
+    }
     if (normalise(name) === "__dashboard__") {
       const [queue, items, activity] = await Promise.all([listQueue(), listDashboardItems(undefined, "OPEN"), listActivity(Math.min(max_messages, 200))]);
       return textResult({ dashboard: true, queue, items, activity });
@@ -567,6 +612,7 @@ function buildServer() {
     );
     if (!current.rowCount) throw new Error("Item must be explicitly APPROVED before posting");
     const item = current.rows[0];
+    if (!item.channel_id) throw new Error("Heartbeat chat is not attached yet");
     await sendHeartbeatMessage(item.channel_id, item.draft);
     const result = await pool!.query(
       `UPDATE heartbeat_hold_queue
@@ -689,6 +735,19 @@ app.patch("/dashboard/api/hold-queue/:id", requireDashboardAuth, async (req, res
     res.json({ item });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to update queue item" });
+  }
+});
+
+app.post("/dashboard/api/hold-queue/:id/attach-channel", requireDashboardAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid id" });
+    if (!url) return res.status(400).json({ error: "Heartbeat chat URL is required" });
+    const item = await attachHeartbeatChannel(id, url);
+    res.json({ item });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to attach Heartbeat chat" });
   }
 });
 
