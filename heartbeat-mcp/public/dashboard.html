@@ -365,18 +365,53 @@
       var ctx=await api("/dashboard/api/eod/context?start="+encodeURIComponent(localStart.toISOString())+"&end="+encodeURIComponent(localEnd.toISOString()));
       var activity=ctx.activity||[],actions=ctx.actions||[],items=ctx.items||[],events=(ctx.calendly&&ctx.calendly.events)||[];
 
-      var heartbeat=activity.filter(function(x){return x.event_type==="heartbeat_manual_message_sent"});
+      function isNoiseText(s){
+        var t=normaliseEod(s);
+        if(!t)return true;
+        return /(^| )test( |$)|dashboard test|verify chatgpt dashboard write path|temporary test item|reminder due|calendar event|close sms placeholder|needs chat|heartbeat hold/.test(t);
+      }
+      function classifyHeartbeat(detail){
+        var t=normaliseEod(detail);
+        if(/reschedul|calendly/.test(t))return "follow-up sent with reschedule link";
+        if(/remind|call today|meeting today/.test(t))return "call reminder sent";
+        if(/payment|invoice|pay|balance|overdue|collection/.test(t))return "payment follow-up sent";
+        if(/refund/.test(t))return "refund follow-up sent";
+        if(/check in|checking in|follow up|following up|how are you getting on|where are you at/.test(t))return "proactive check-in sent";
+        return "Heartbeat follow-up sent";
+      }
+      function addWork(arr,text){
+        if(!text||isNoiseText(text))return;
+        var key=normaliseEod(text);
+        if(!arr.some(function(w){return normaliseEod(w)===key}))arr.push(text);
+      }
+
+      var heartbeat=activity.filter(function(x){
+        return x.event_type==="heartbeat_manual_message_sent" && !isNoiseText(x.detail);
+      });
       var noShowActions=actions.filter(function(x){return x.action_type==="MARK_CALENDLY_NO_SHOW"});
       var eventInvitees=[];
       events.forEach(function(ev){(ev.invitees||[]).forEach(function(inv){eventInvitees.push({event:ev,invitee:inv})})});
 
+      var trackedPossibleNoShows=items.filter(function(x){
+        return x.category==="CALL" && x.metadata && x.metadata.possible_no_show &&
+          String(x.updated_at||"")>=ctx.window.start && String(x.updated_at||"")<ctx.window.end;
+      });
+
+      function inviteeName(x){return x.invitee.name||x.invitee.email||"Invitee"}
+      function hasNoShowSignal(x){
+        var name=normaliseEod(inviteeName(x));
+        return !!x.invitee.no_show ||
+          noShowActions.some(function(a){return normaliseEod(a.payload&&a.payload.client_name)===name}) ||
+          trackedPossibleNoShows.some(function(i){return normaliseEod(i.client_name)===name});
+      }
+
       var booked=eventInvitees.length;
-      var noShows=eventInvitees.filter(function(x){return !!x.invitee.no_show}).length;
+      var noShows=eventInvitees.filter(hasNoShowSignal).length;
       var rescheduled=eventInvitees.filter(function(x){return !!x.invitee.rescheduled||!!x.invitee.old_invitee}).length;
       var canceled=eventInvitees.filter(function(x){return x.invitee.status==="canceled"||x.event.status==="canceled"}).length;
 
       var likelyTaken=eventInvitees.filter(function(x){
-        return x.event.status==="active" && x.invitee.status!=="canceled" && !x.invitee.no_show && new Date(x.event.end_time||0)<=now;
+        return x.event.status==="active" && x.invitee.status!=="canceled" && !hasNoShowSignal(x) && new Date(x.event.end_time||0)<=now;
       }).length;
 
       function typeCount(rx){
@@ -403,64 +438,80 @@
 
       var work=[];
       eventInvitees.forEach(function(x){
-        var name=x.invitee.name||x.invitee.email||"Invitee";
-        if(x.invitee.no_show){
-          var chased=heartbeat.some(function(h){return normaliseEod(h.client_name)===normaliseEod(name)});
-          var marked=noShowActions.some(function(a){return normaliseEod(a.payload&&a.payload.client_name)===normaliseEod(name)});
+        var name=inviteeName(x);
+        var chased=heartbeat.some(function(h){return normaliseEod(h.client_name)===normaliseEod(name)});
+        var marked=noShowActions.some(function(a){return normaliseEod(a.payload&&a.payload.client_name)===normaliseEod(name)});
+        if(hasNoShowSignal(x)){
           var msg=name+" — no-show";
-          if(marked)msg+="; marked in Calendly";
-          if(chased)msg+="; followed up in Heartbeat";
+          if(marked||x.invitee.no_show)msg+="; recorded";
+          if(chased)msg+="; chased in Heartbeat";
           if(x.invitee.rescheduled||x.invitee.new_invitee)msg+="; rescheduled";
-          work.push(msg);
+          addWork(work,msg);
         }else if(x.invitee.rescheduled||x.invitee.old_invitee){
-          work.push(name+" — rescheduled call");
+          addWork(work,name+" — rescheduled call");
         }
       });
 
       heartbeat.forEach(function(h){
         var name=h.client_name||"Client";
         var detail=String(h.detail||"").replace(/\s+/g," ").trim();
-        if(!detail)return;
-        var already=work.some(function(w){return normaliseEod(w).indexOf(normaliseEod(name))===0});
-        if(!already)work.push(name+" — Heartbeat follow-up sent: "+detail);
+        if(!detail||isNoiseText(detail))return;
+        var sameClient=work.some(function(w){return normaliseEod(w).indexOf(normaliseEod(name))===0});
+        var label=classifyHeartbeat(detail);
+        if(sameClient){
+          if(!work.some(function(w){return normaliseEod(w).indexOf(normaliseEod(name))===0 && normaliseEod(w).includes(normaliseEod(label))})){
+            addWork(work,name+" — "+label);
+          }
+        }else addWork(work,name+" — "+label);
       });
 
       items.filter(function(x){
-        return ["COLLECTION","REFUND","CLIENT_ATTENTION","FOLLOW_UP","CALL"].includes(x.category) &&
-          (String(x.updated_at||"")>=ctx.window.start && String(x.updated_at||"")<ctx.window.end);
+        if(!["COLLECTION","REFUND","CLIENT_ATTENTION","FOLLOW_UP"].includes(x.category))return false;
+        if(!(String(x.updated_at||"")>=ctx.window.start && String(x.updated_at||"")<ctx.window.end))return false;
+        return !isNoiseText((x.title||"")+" "+(x.summary||""));
       }).forEach(function(x){
-        var text=(x.client_name?x.client_name+" — ":"")+(x.title||x.category)+(x.summary?": "+x.summary:"");
-        if(!work.some(function(w){return normaliseEod(w)===normaliseEod(text)}))work.push(text);
+        var label=x.category==="COLLECTION"?"collection activity":
+          x.category==="REFUND"?"refund activity":
+          x.category==="FOLLOW_UP"?"follow-up":
+          "client progress";
+        var detail=(x.title||"").trim();
+        if(x.summary)detail+=(detail?": ":"")+String(x.summary).trim();
+        addWork(work,(x.client_name?x.client_name+" — ":"")+label+(detail?": "+detail:""));
       });
 
       activity.filter(function(x){
-        return ["dashboard_item_resolved","dashboard_action_requested"].includes(x.event_type);
+        if(x.event_type!=="dashboard_item_resolved")return false;
+        if(isNoiseText((x.title||"")+" "+(x.detail||"")))return false;
+        return !!x.client_name;
       }).forEach(function(x){
-        var text=(x.client_name?x.client_name+" — ":"")+(x.title||"Activity")+(x.detail?": "+x.detail:"");
-        if(!work.some(function(w){return normaliseEod(w)===normaliseEod(text)}))work.push(text);
+        addWork(work,x.client_name+" — completed: "+String(x.title||"").replace(/^DONE:\s*/i,""));
       });
 
       lines.push("");
       lines.push("*Activity / Outcomes*");
       if(work.length)work.slice(0,30).forEach(function(x){lines.push("• "+x)});
-      else lines.push("• No tracked client activity was recorded today.");
+      else lines.push("• No meaningful tracked client activity was recorded today.");
 
       var openRisks=items.filter(function(x){
-        return ["REFUND","COLLECTION","CLIENT_ATTENTION","FOLLOW_UP"].includes(x.category) && x.status==="OPEN";
+        return ["REFUND","COLLECTION","CLIENT_ATTENTION","FOLLOW_UP"].includes(x.category) &&
+          x.status==="OPEN" &&
+          !isNoiseText((x.title||"")+" "+(x.summary||""));
       });
       if(openRisks.length){
         lines.push("");
         lines.push("*Carry-over / Follow-up*");
-        openRisks.slice(0,12).forEach(function(x){lines.push("• "+(x.client_name?x.client_name+" — ":"")+(x.title||x.category)+(x.summary?": "+x.summary:""))});
+        openRisks.slice(0,12).forEach(function(x){
+          lines.push("• "+(x.client_name?x.client_name+" — ":"")+(x.title||x.category)+(x.summary?": "+x.summary:""));
+        });
       }
 
       draft.value=lines.join("\n");
 
       var checks=[];
       checks.push('<div class="item-card"><div class="item-title">'+booked+' Calendly booking(s) found today</div><div class="item-summary">'+likelyTaken+' likely taken · '+noShows+' no-show · '+rescheduled+' rescheduled · '+canceled+' cancelled.</div></div>');
-      checks.push('<div class="item-card"><div class="item-title">'+heartbeat.length+' Heartbeat message(s) sent from the Command Centre</div><div class="item-summary">These are included as proactive/chase activity where relevant.</div></div>');
+      checks.push('<div class="item-card"><div class="item-title">'+heartbeat.length+' meaningful Heartbeat message(s) sent from the Command Centre</div><div class="item-summary">Test messages and reminder-card noise are excluded.</div></div>');
       if(ctx.calendly&&ctx.calendly.error)checks.push('<div class="item-card"><div class="item-title">Calendly warning</div><div class="item-summary">'+esc(ctx.calendly.error)+'</div></div>');
-      checks.push('<div class="item-card"><div class="item-title">Still editable</div><div class="item-summary">Add anything done outside the Command Centre that has not been captured yet. We can automate more of those sources next.</div></div>');
+      checks.push('<div class="item-card"><div class="item-title">Call attendance is still inferred</div><div class="item-summary">Calendly tells us bookings, cancellations, reschedules and marked no-shows. Fathom will be the next useful source for confirming calls actually taken.</div></div>');
       document.getElementById("eodChecks").innerHTML=checks.join("");
     }catch(e){
       draft.value="";
