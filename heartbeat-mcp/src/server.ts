@@ -113,8 +113,8 @@ async function listDashboardItems(category?: string, status = "OPEN") {
   await ensureOpsTables();
   const values: unknown[] = [];
   const where: string[] = [];
-  if (category) { values.push(category); where.push(`category=${values.length}`); }
-  if (status) { values.push(status); where.push(`status=${values.length}`); }
+  if (category) { values.push(category); where.push("category=$" + values.length); }
+  if (status) { values.push(status); where.push("status=$" + values.length); }
   const sql = `SELECT * FROM dashboard_items ${where.length ? "WHERE " + where.join(" AND ") : ""}
                ORDER BY CASE priority WHEN 'URGENT' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'NORMAL' THEN 3 ELSE 4 END,
                         COALESCE(due_at, '2999-12-31'::timestamptz), updated_at DESC
