@@ -15,9 +15,6 @@ const HEARTBEAT_FROM_USER_ID = process.env.HEARTBEAT_FROM_USER_ID || "d8a956be-e
 const DASHBOARD_USER = process.env.DASHBOARD_USER || "dave";
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD;
 const DASHBOARD_SESSION_TOKEN = process.env.DASHBOARD_SESSION_TOKEN;
-const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
-const SLACK_EOD_CHANNEL_ID = process.env.SLACK_EOD_CHANNEL_ID || "C0BEJ7304QJ";
-const CALENDLY_ACCESS_TOKEN = process.env.CALENDLY_ACCESS_TOKEN;
 const pool = DATABASE_URL ? new pg.Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } }) : null;
 
 if (!HEARTBEAT_API_KEY) throw new Error("HEARTBEAT_API_KEY is required");
@@ -87,6 +84,19 @@ async function ensureOpsTables() {
     );
     ALTER TABLE dashboard_items ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
     CREATE INDEX IF NOT EXISTS dashboard_items_category_status_idx ON dashboard_items(category,status);
+
+    CREATE TABLE IF NOT EXISTS dashboard_actions (
+      id BIGSERIAL PRIMARY KEY,
+      action_type TEXT NOT NULL,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      requested_by TEXT NOT NULL DEFAULT 'Dave',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      result_note TEXT
+    );
+    CREATE INDEX IF NOT EXISTS dashboard_actions_status_idx ON dashboard_actions(status,created_at);
   `);
 }
 
@@ -606,6 +616,45 @@ function buildServer() {
     return textResult({ updated: true, item });
   });
 
+  server.registerTool("list_dashboard_actions", {
+    description: "List dashboard actions explicitly approved by Dave and waiting for ChatGPT to execute through connected apps such as Slack or Calendly.",
+    inputSchema: z.object({ status: z.enum(["PENDING","COMPLETED","FAILED"]).default("PENDING") }),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    securitySchemes: [{ type: "noauth" }]
+  }, async ({ status }) => {
+    await ensureOpsTables();
+    const result = await pool!.query(`SELECT * FROM dashboard_actions WHERE status=$1 ORDER BY created_at ASC LIMIT 100`, [status]);
+    return textResult({ actions: result.rows });
+  });
+
+  server.registerTool("resolve_dashboard_action", {
+    description: "Mark a previously approved dashboard action as COMPLETED or FAILED after ChatGPT executes it through the relevant connected app.",
+    inputSchema: z.object({
+      id: z.number().int().positive(),
+      status: z.enum(["COMPLETED","FAILED"]),
+      result_note: z.string().optional()
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    securitySchemes: [{ type: "noauth" }]
+  }, async ({ id, status, result_note }) => {
+    await ensureOpsTables();
+    const result = await pool!.query(
+      `UPDATE dashboard_actions SET status=$2,result_note=$3,completed_at=NOW(),updated_at=NOW()
+       WHERE id=$1 AND status='PENDING' RETURNING *`,
+      [id,status,result_note||null]
+    );
+    if (!result.rowCount) throw new Error("Action must exist and be PENDING");
+    const action = result.rows[0];
+    if (status === "COMPLETED" && action.action_type === "MARK_CALENDLY_NO_SHOW" && action.payload?.dashboard_item_id) {
+      await pool!.query(`UPDATE dashboard_items SET status='DONE', metadata=metadata || $2::jsonb, updated_at=NOW() WHERE id=$1`, [
+        Number(action.payload.dashboard_item_id),
+        JSON.stringify({ no_show_marked: true, no_show_marked_at: new Date().toISOString() })
+      ]);
+    }
+    await logActivity({ eventType: "dashboard_action_resolved", title: `${status}: ${action.action_type}`, detail: result_note || null, entityType: "dashboard_action", entityId: action.id, actor: "ChatGPT" });
+    return textResult({ action });
+  });
+
   server.registerTool("post_approved_reply", {
     description: "Post the exact draft from an APPROVED queue item to Heartbeat, then mark it POSTED. Refuses HOLD drafts.",
     inputSchema: z.object({ id: z.number().int().positive() }),
@@ -704,25 +753,21 @@ app.post("/dashboard/api/eod/send", requireDashboardAuth, async (req, res) => {
   try {
     const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
     if (!message) return res.status(400).json({ error: "EOD report is empty" });
-    if (!SLACK_BOT_TOKEN) return res.status(503).json({ error: "Slack sending needs SLACK_BOT_TOKEN configured on Render." });
-    const response = await fetch("https://slack.com/api/chat.postMessage", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json; charset=utf-8" },
-      body: JSON.stringify({ channel: SLACK_EOD_CHANNEL_ID, text: message }),
-      signal: AbortSignal.timeout(20000)
-    });
-    const body = await response.json() as any;
-    if (!response.ok || !body?.ok) throw new Error(body?.error || `Slack send failed ${response.status}`);
-    await logActivity({ eventType: "eod_sent", title: "EOD report sent to Slack", detail: message.slice(0,1000), entityType: "eod_report", entityId: body.ts, actor: "Dave" });
-    res.json({ sent: true, ts: body.ts });
+    await ensureOpsTables();
+    const result = await pool!.query(
+      `INSERT INTO dashboard_actions (action_type,payload,status,requested_by)
+       VALUES ('SEND_EOD_SLACK',$1::jsonb,'PENDING','Dave') RETURNING *`,
+      [JSON.stringify({ channel_id: "C0BEJ7304QJ", channel_name: "3-csm-eod-reports", message })]
+    );
+    await logActivity({ eventType: "dashboard_action_requested", title: "EOD Slack send approved", detail: message.slice(0,1000), entityType: "dashboard_action", entityId: result.rows[0].id, actor: "Dave" });
+    res.json({ queued: true, action: result.rows[0] });
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to send EOD report" });
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to queue EOD send" });
   }
 });
 
 app.post("/dashboard/api/items/:id/no-show", requireDashboardAuth, async (req, res) => {
   try {
-    if (!CALENDLY_ACCESS_TOKEN) return res.status(503).json({ error: "Calendly no-show marking needs CALENDLY_ACCESS_TOKEN configured on Render." });
     await ensureOpsTables();
     const id = Number(req.params.id);
     const found = await pool!.query(`SELECT * FROM dashboard_items WHERE id=$1 AND status='OPEN'`, [id]);
@@ -730,22 +775,15 @@ app.post("/dashboard/api/items/:id/no-show", requireDashboardAuth, async (req, r
     const item = found.rows[0];
     const invitee = item.metadata?.calendly_invitee_uri;
     if (!invitee) return res.status(409).json({ error: "This call is missing its Calendly invitee reference." });
-    const response = await fetch("https://api.calendly.com/invitee_no_shows", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${CALENDLY_ACCESS_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ invitee }),
-      signal: AbortSignal.timeout(20000)
-    });
-    const body = await response.json().catch(() => ({})) as any;
-    if (!response.ok) throw new Error(body?.message || `Calendly no-show failed ${response.status}`);
-    const updated = await pool!.query(
-      `UPDATE dashboard_items SET status='DONE', metadata=metadata || $2::jsonb, updated_at=NOW() WHERE id=$1 RETURNING *`,
-      [id, JSON.stringify({ no_show_marked: true, no_show_marked_at: new Date().toISOString() })]
+    const result = await pool!.query(
+      `INSERT INTO dashboard_actions (action_type,payload,status,requested_by)
+       VALUES ('MARK_CALENDLY_NO_SHOW',$1::jsonb,'PENDING','Dave') RETURNING *`,
+      [JSON.stringify({ dashboard_item_id: id, client_name: item.client_name, title: item.title, calendly_invitee_uri: invitee, calendly_event_uri: item.metadata?.calendly_event_uri || null })]
     );
-    await logActivity({ eventType: "calendly_no_show_marked", title: "Marked Calendly no-show", detail: item.title, clientName: item.client_name, entityType: "dashboard_item", entityId: id, actor: "Dave" });
-    res.json({ marked: true, item: updated.rows[0] });
+    await logActivity({ eventType: "dashboard_action_requested", title: "Calendly no-show approved", detail: item.title, clientName: item.client_name, entityType: "dashboard_action", entityId: result.rows[0].id, actor: "Dave" });
+    res.json({ queued: true, action: result.rows[0] });
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to mark no-show" });
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to queue no-show action" });
   }
 });
 
