@@ -5,6 +5,7 @@ import { createMcpExpressApp } from "@modelcontextprotocol/express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import * as z from "zod/v4";
 import pg from "pg";
+import { randomUUID } from "node:crypto";
 
 const HEARTBEAT_BASE_URL = "https://api.heartbeat.chat/v0";
 const HEARTBEAT_API_KEY = process.env.HEARTBEAT_API_KEY;
@@ -12,6 +13,7 @@ const MCP_PATH_TOKEN = process.env.MCP_PATH_TOKEN;
 const PORT = Number(process.env.PORT || 3000);
 const DATABASE_URL = process.env.DATABASE_URL;
 const HEARTBEAT_FROM_USER_ID = process.env.HEARTBEAT_FROM_USER_ID || "d8a956be-e3e4-4ef1-9978-6f1b448d3cba";
+const HEARTBEAT_COMMUNITY_ID = process.env.HEARTBEAT_COMMUNITY_ID || "f81e70fc-d08b-43bd-b297-3e27a8f202a8";
 const DASHBOARD_USER = process.env.DASHBOARD_USER || "dave";
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD;
 const DASHBOARD_SESSION_TOKEN = process.env.DASHBOARD_SESSION_TOKEN;
@@ -163,25 +165,39 @@ async function createDashboardItem(input: {
 async function sendHeartbeatMessage(channelID: string, text: string) {
   const message = text.trim();
   if (!message) throw new Error("Heartbeat message cannot be empty");
-  const url = `${HEARTBEAT_BASE_URL}/chatChannel/${encodeURIComponent(channelID)}/message`;
-  const payload: Record<string, string> = { text: message, content: message };
-  if (HEARTBEAT_FROM_USER_ID) payload.from = HEARTBEAT_FROM_USER_ID;
-  const response = await fetch(url, {
-    method: "PUT",
+
+  const escaped = message
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+  const htmlMessage = `<p>${escaped.replace(/\n/g, "<br>")}</p>`;
+
+  const response = await fetch("https://api.heartbeat.chat/trpc/createChatMessage?batch=1", {
+    method: "POST",
     headers: {
       Authorization: `Bearer ${HEARTBEAT_API_KEY}`,
       Accept: "application/json",
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      "0": {
+        json: {
+          communityID: HEARTBEAT_COMMUNITY_ID,
+          chatID: channelID,
+          clientGeneratedID: randomUUID(),
+          message: htmlMessage
+        }
+      }
+    }),
     signal: AbortSignal.timeout(20000)
   });
+
+  const body = await response.text();
   if (!response.ok) {
-    const body = await response.text();
     throw new Error(`Heartbeat send failed ${response.status}: ${body}`);
   }
 }
-
 async function queueReply(clientName: string, draft: string, reason?: string) {
   await ensureQueueTable();
   const matches = await findChatChannels(clientName);
