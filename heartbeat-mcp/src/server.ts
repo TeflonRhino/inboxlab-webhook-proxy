@@ -406,7 +406,7 @@ function buildServer() {
       try { command = JSON.parse(draft); } catch { throw new Error("Dashboard command must be valid JSON"); }
       if (command?.action === "add") {
         const category = String(command.category || "");
-        if (!["CLIENT_ATTENTION","COLLECTION","REFUND","CALL","FOLLOW_UP"].includes(category)) throw new Error("Invalid dashboard category");
+        if (!["CLIENT_ATTENTION","COLLECTION","REFUND","CALL","FOLLOW_UP","ONBOARDING"].includes(category)) throw new Error("Invalid dashboard category");
         const item = await createDashboardItem({
           category,
           clientName: command.client_name ? String(command.client_name) : undefined,
@@ -509,7 +509,7 @@ function buildServer() {
   server.registerTool("list_dashboard_items", {
     description: "List visual InboxLab dashboard items surfaced by ChatGPT, such as client attention, collections, refunds, calls and follow-ups. Read-only.",
     inputSchema: z.object({
-      category: z.enum(["CLIENT_ATTENTION","COLLECTION","REFUND","CALL","FOLLOW_UP"]).optional(),
+      category: z.enum(["CLIENT_ATTENTION","COLLECTION","REFUND","CALL","FOLLOW_UP","ONBOARDING"]).optional(),
       status: z.enum(["OPEN","DONE","DISMISSED"]).default("OPEN")
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
@@ -519,7 +519,7 @@ function buildServer() {
   server.registerTool("add_dashboard_item", {
     description: "Add one concise item to the visual InboxLab Command Centre after ChatGPT finds something worth surfacing from connected work systems.",
     inputSchema: z.object({
-      category: z.enum(["CLIENT_ATTENTION","COLLECTION","REFUND","CALL","FOLLOW_UP"]),
+      category: z.enum(["CLIENT_ATTENTION","COLLECTION","REFUND","CALL","FOLLOW_UP","ONBOARDING"]),
       client_name: z.string().optional(),
       title: z.string().min(1),
       summary: z.string().optional(),
