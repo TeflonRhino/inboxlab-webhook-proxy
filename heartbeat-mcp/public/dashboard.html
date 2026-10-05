@@ -136,7 +136,13 @@
   <div class="section-head"><h2>End of day report</h2><span class="pill">Review before sending</span></div>
   <div class="workspace">
     <div class="panel">
-      <div class="actions"><button class="btn primary" id="generateEod">Generate EOD Report</button><button class="btn" id="refreshEod">Regenerate</button></div>
+      <div class="actions">
+        <label class="meta" for="eodDate" style="display:flex;align-items:center;gap:8px">Report date
+          <input id="eodDate" type="date" style="padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--panel);color:inherit">
+        </label>
+        <button class="btn primary" id="generateEod">Generate EOD Report</button>
+        <button class="btn" id="refreshEod">Regenerate</button>
+      </div>
       <textarea class="draft" id="eodDraft" style="min-height:360px" placeholder="Generate the report, then edit or add anything you want before sending."></textarea>
       <div class="actions"><button class="btn primary" id="sendEod">Approve &amp; Send to #3-csm-eod-reports</button></div>
     </div>
@@ -360,8 +366,10 @@
     draft.value="Building today's activity ledger…";
     try{
       var now=new Date();
-      var localStart=new Date(now.getFullYear(),now.getMonth(),now.getDate(),0,0,0,0);
-      var localEnd=new Date(now.getFullYear(),now.getMonth(),now.getDate()+1,0,0,0,0);
+      var selectedDate=document.getElementById("eodDate").value;
+      var base=selectedDate?new Date(selectedDate+"T12:00:00"):now;
+      var localStart=new Date(base.getFullYear(),base.getMonth(),base.getDate(),0,0,0,0);
+      var localEnd=new Date(base.getFullYear(),base.getMonth(),base.getDate()+1,0,0,0,0);
       var ctx=await api("/dashboard/api/eod/context?start="+encodeURIComponent(localStart.toISOString())+"&end="+encodeURIComponent(localEnd.toISOString()));
       var activity=ctx.activity||[],actions=ctx.actions||[],items=ctx.items||[],events=(ctx.calendly&&ctx.calendly.events)||[],fathomMeetings=(ctx.fathom&&ctx.fathom.meetings)||[];
 
@@ -440,7 +448,7 @@
       var post=typeCount(/post.?launch|support|check.?in/i);
 
       var lines=[];
-      lines.push("*End of day report: "+new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",year:"numeric"}).format(now)+"*");
+      lines.push("*End of day report: "+new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",year:"numeric"}).format(base)+"*");
       lines.push("");
       lines.push("*Total Calls Booked:* "+booked);
       lines.push("*Total Calls Taken:* "+likelyTaken);
@@ -675,6 +683,11 @@
   document.body.addEventListener("click",function(e){var j=e.target.closest("[data-jump]");if(j)switchView(j.dataset.jump)});
   document.getElementById("refresh").addEventListener("click",function(){if(current==="messages"){if(selectedChat&&!messageSending)loadMessageContext();else if(!selectedChat)searchMessages()}else load()});
   document.getElementById("queueFilter").addEventListener("change",filterQueue);
+  var eodDate=document.getElementById("eodDate");
+  if(eodDate&&!eodDate.value){
+    var d=new Date(),yyyy=d.getFullYear(),mm=String(d.getMonth()+1).padStart(2,"0"),dd=String(d.getDate()).padStart(2,"0");
+    eodDate.value=yyyy+"-"+mm+"-"+dd;
+  }
   document.getElementById("generateEod").addEventListener("click",generateEod);
   document.getElementById("refreshEod").addEventListener("click",generateEod);
   document.getElementById("sendEod").addEventListener("click",async function(){
