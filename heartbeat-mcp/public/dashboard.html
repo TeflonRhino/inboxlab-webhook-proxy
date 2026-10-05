@@ -466,7 +466,8 @@
       var onboarding=typeCount(/onboard/i);
       var setup=typeCount(/setup/i);
       var launch=eventInvitees.filter(function(x){return /launch/i.test(String(x.event.name||""))&&!/post/i.test(String(x.event.name||""))}).length;
-      var post=typeCount(/post.?launch|support|check.?in/i);
+      var postLaunch=typeCount(/post.?launch/i);
+      var support=typeCount(/support|check.?in/i);
 
       var lines=[];
       lines.push("*End of day report: "+new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",year:"numeric"}).format(base)+"*");
@@ -479,7 +480,8 @@
       lines.push("*Onboarding Calls:* "+onboarding);
       lines.push("*Setup Calls:* "+setup);
       lines.push("*Launch Calls:* "+launch);
-      lines.push("*Post-Launch / Support Calls:* "+post);
+      lines.push("*Post-Launch Calls:* "+postLaunch);
+      lines.push("*Support Calls:* "+support);
 
       function cleanSummary(s){
         var t=String(s||"");
