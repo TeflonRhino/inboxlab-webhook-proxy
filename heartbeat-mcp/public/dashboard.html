@@ -407,13 +407,22 @@
           var nm=String(h.client_name||"").trim();
           if(nm)candidates.push(nm);
         });
-        for(var i=0;i<candidates.length;i++){
-          var cn=normaliseEod(candidates[i]);
-          if(cn===n)return candidates[i];
-        }
-        for(var j=0;j<candidates.length;j++){
-          var cn2=normaliseEod(candidates[j]);
-          if(cn2 && (cn2.indexOf(n)===0 || n.indexOf(cn2)===0))return candidates[j];
+        fathomMeetings.forEach(function(m){
+          (m.calendar_invitees||[]).forEach(function(i){
+            var nm=String((i&&i.name)||"").trim();
+            if(nm&&nm.indexOf("@")<0)candidates.push(nm);
+          });
+        });
+
+        var matches=candidates.filter(function(candidate){
+          var cn=normaliseEod(candidate);
+          return cn && (cn===n || cn.indexOf(n)===0 || n.indexOf(cn)===0);
+        });
+        if(matches.length){
+          matches.sort(function(a,b){
+            return normaliseEod(b).length-normaliseEod(a).length;
+          });
+          return matches[0];
         }
         return String(name||"").trim();
       }
