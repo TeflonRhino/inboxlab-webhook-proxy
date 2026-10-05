@@ -15,6 +15,9 @@ const HEARTBEAT_FROM_USER_ID = process.env.HEARTBEAT_FROM_USER_ID || "d8a956be-e
 const DASHBOARD_USER = process.env.DASHBOARD_USER || "dave";
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD;
 const DASHBOARD_SESSION_TOKEN = process.env.DASHBOARD_SESSION_TOKEN;
+const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
+const SLACK_EOD_CHANNEL_ID = process.env.SLACK_EOD_CHANNEL_ID || "C0BEJ7304QJ";
+const CALENDLY_ACCESS_TOKEN = process.env.CALENDLY_ACCESS_TOKEN;
 const pool = DATABASE_URL ? new pg.Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } }) : null;
 
 if (!HEARTBEAT_API_KEY) throw new Error("HEARTBEAT_API_KEY is required");
@@ -82,6 +85,7 @@ async function ensureOpsTables() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE dashboard_items ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
     CREATE INDEX IF NOT EXISTS dashboard_items_category_status_idx ON dashboard_items(category,status);
   `);
 }
@@ -133,12 +137,13 @@ async function createDashboardItem(input: {
   priority?: string;
   source?: string;
   dueAt?: string;
+  metadata?: Record<string, unknown>;
 }) {
   await ensureOpsTables();
   const result = await pool!.query(
-    `INSERT INTO dashboard_items (category,client_name,title,summary,priority,source,due_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [input.category, input.clientName || null, input.title, input.summary || null, input.priority || "NORMAL", input.source || "ChatGPT", input.dueAt || null]
+    `INSERT INTO dashboard_items (category,client_name,title,summary,priority,source,due_at,metadata)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING *`,
+    [input.category, input.clientName || null, input.title, input.summary || null, input.priority || "NORMAL", input.source || "ChatGPT", input.dueAt || null, JSON.stringify(input.metadata || {})]
   );
   const item = result.rows[0];
   await logActivity({ eventType: "dashboard_item_created", title: `${item.category}: ${item.title}`, detail: item.summary, clientName: item.client_name, entityType: "dashboard_item", entityId: item.id, actor: "ChatGPT" });
@@ -689,6 +694,56 @@ app.get("/dashboard/api/overview", requireDashboardAuth, async (_req, res) => {
     res.json({ queue, items, activity });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to load dashboard" });
+  }
+});
+
+
+app.post("/dashboard/api/eod/send", requireDashboardAuth, async (req, res) => {
+  try {
+    const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    if (!message) return res.status(400).json({ error: "EOD report is empty" });
+    if (!SLACK_BOT_TOKEN) return res.status(503).json({ error: "Slack sending needs SLACK_BOT_TOKEN configured on Render." });
+    const response = await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${SLACK_BOT_TOKEN}`, "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ channel: SLACK_EOD_CHANNEL_ID, text: message }),
+      signal: AbortSignal.timeout(20000)
+    });
+    const body = await response.json() as any;
+    if (!response.ok || !body?.ok) throw new Error(body?.error || `Slack send failed ${response.status}`);
+    await logActivity({ eventType: "eod_sent", title: "EOD report sent to Slack", detail: message.slice(0,1000), entityType: "eod_report", entityId: body.ts, actor: "Dave" });
+    res.json({ sent: true, ts: body.ts });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to send EOD report" });
+  }
+});
+
+app.post("/dashboard/api/items/:id/no-show", requireDashboardAuth, async (req, res) => {
+  try {
+    if (!CALENDLY_ACCESS_TOKEN) return res.status(503).json({ error: "Calendly no-show marking needs CALENDLY_ACCESS_TOKEN configured on Render." });
+    await ensureOpsTables();
+    const id = Number(req.params.id);
+    const found = await pool!.query(`SELECT * FROM dashboard_items WHERE id=$1 AND status='OPEN'`, [id]);
+    if (!found.rowCount) return res.status(404).json({ error: "Call item not found" });
+    const item = found.rows[0];
+    const invitee = item.metadata?.calendly_invitee_uri;
+    if (!invitee) return res.status(409).json({ error: "This call is missing its Calendly invitee reference." });
+    const response = await fetch("https://api.calendly.com/invitee_no_shows", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${CALENDLY_ACCESS_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ invitee }),
+      signal: AbortSignal.timeout(20000)
+    });
+    const body = await response.json().catch(() => ({})) as any;
+    if (!response.ok) throw new Error(body?.message || `Calendly no-show failed ${response.status}`);
+    const updated = await pool!.query(
+      `UPDATE dashboard_items SET status='DONE', metadata=metadata || $2::jsonb, updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [id, JSON.stringify({ no_show_marked: true, no_show_marked_at: new Date().toISOString() })]
+    );
+    await logActivity({ eventType: "calendly_no_show_marked", title: "Marked Calendly no-show", detail: item.title, clientName: item.client_name, entityType: "dashboard_item", entityId: id, actor: "Dave" });
+    res.json({ marked: true, item: updated.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to mark no-show" });
   }
 });
 
