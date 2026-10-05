@@ -173,7 +173,13 @@ async function sendHeartbeatMessage(channelID: string, text: string) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-  const htmlMessage = `<p>${escaped.replace(/\n/g, "<br>")}</p>`;
+
+  const linked = escaped.replace(
+    /\bhttps?:\/\/[^\s<]+/gi,
+    (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
+  );
+
+  const htmlMessage = `<p>${linked.replace(/\n/g, "<br>")}</p>`;
 
   const response = await fetch("https://api.heartbeat.chat/trpc/createChatMessage?batch=1", {
     method: "POST",
