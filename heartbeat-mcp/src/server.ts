@@ -163,23 +163,59 @@ async function createDashboardItem(input: {
   return item;
 }
 
+async function listHeartbeatUsers(): Promise<Array<{ id: string; name: string }>> {
+  const body = await heartbeat<unknown>("/users");
+  const users = Array.isArray(body)
+    ? body
+    : Array.isArray((body as { users?: unknown[] })?.users)
+      ? (body as { users: unknown[] }).users
+      : [];
+
+  return (users as HeartbeatUser[])
+    .filter((raw) => Boolean(raw?.id))
+    .map((raw) => {
+      const composed = [raw.firstName, raw.lastName].filter(Boolean).join(" ").trim();
+      return { id: String(raw.id), name: String(raw.name || raw.fullName || composed || raw.email || raw.id) };
+    });
+}
+
+function escapeHeartbeatHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function formatHeartbeatMessage(text: string) {
+  const users = await listHeartbeatUsers();
+  const byLength = users
+    .filter((u) => u.name && u.id)
+    .sort((a, b) => b.name.length - a.name.length);
+
+  let html = escapeHeartbeatHtml(text);
+
+  for (const user of byLength) {
+    const literal = "@" + escapeHeartbeatHtml(user.name);
+    if (!html.includes(literal)) continue;
+    const mention = `<span class="reference" data-index="0" data-denotation-char="@" data-id="mention.user.${escapeHeartbeatHtml(user.id)}" data-value="${escapeHeartbeatHtml(user.name)}">&#65279;<span contenteditable="false"><span class="user-reference"><span class="ql-mention-denotation-char">@</span>${escapeHeartbeatHtml(user.name)}</span></span>&#65279;</span>`;
+    html = html.split(literal).join(mention);
+  }
+
+  html = html.replace(
+    /\bhttps?:\/\/[^\s<]+/gi,
+    (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
+  );
+
+  return `<p>${html.replace(/\n/g, "<br>")}</p>`;
+}
+
 async function sendHeartbeatMessage(channelID: string, text: string) {
   if (!HEARTBEAT_WEB_TOKEN) throw new Error("HEARTBEAT_WEB_TOKEN is required to send Heartbeat messages");
   const message = text.trim();
   if (!message) throw new Error("Heartbeat message cannot be empty");
 
-  const escaped = message
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-
-  const linked = escaped.replace(
-    /\bhttps?:\/\/[^\s<]+/gi,
-    (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
-  );
-
-  const htmlMessage = `<p>${linked.replace(/\n/g, "<br>")}</p>`;
+  const htmlMessage = await formatHeartbeatMessage(message);
 
   const response = await fetch("https://api.heartbeat.chat/trpc/createChatMessage?batch=1", {
     method: "POST",
@@ -833,6 +869,19 @@ app.post("/dashboard/api/items/:id/resolve", requireDashboardAuth, async (req, r
   }
 });
 
+
+app.get("/dashboard/api/messages/mentions", requireDashboardAuth, async (req, res) => {
+  try {
+    const q = typeof req.query.q === "string" ? normalise(req.query.q) : "";
+    if (!q) return res.json({ users: [] });
+    const users = (await listHeartbeatUsers())
+      .filter((u) => normalise(u.name).includes(q))
+      .slice(0, 8);
+    res.json({ users });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to search Heartbeat users" });
+  }
+});
 
 app.get("/dashboard/api/messages/search", requireDashboardAuth, async (req, res) => {
   try {
