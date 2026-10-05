@@ -329,18 +329,28 @@
     }).join("");
   }
   function renderOnboarding(){
-    var items=data.items.filter(function(x){return x.category==="ONBOARDING"});
     var el=document.getElementById("onboardingList");
-    if(!items.length){el.innerHTML=empty("No onboarding welcomes waiting","New InboxLab onboarding bookings will appear here after the watcher sees them.");return}
-    el.innerHTML=items.map(function(x){
-      var hb=data.queue.filter(function(q){return q.client_name===x.client_name}).sort(function(a,b){return new Date(b.created_at)-new Date(a.created_at)})[0];
-      var hbStatus=hb?hb.status:"NOT CREATED";
-      var hbClass=hb?String(hb.status).toLowerCase():"skipped";
-      return '<article class="item-card"><div class="itop"><div><div class="item-title">'+esc(x.client_name||x.title)+'</div><div class="meta">'+esc(x.title)+'</div></div><span class="priority '+esc(x.priority)+'">'+esc(x.priority)+'</span></div>'+
-      (x.summary?'<div class="item-summary">'+esc(x.summary)+'</div>':'')+
-      '<div class="actions"><span class="pill '+hbClass+'">Heartbeat: '+esc(hbStatus)+'</span><span class="pill">Close SMS: placeholder</span></div>'+
-      '<div class="item-foot"><span>Updated '+fmt(x.updated_at)+'</span><div><button class="btn" data-iresolve="DONE" data-id="'+x.id+'">Done</button> <button class="btn" data-iresolve="DISMISSED" data-id="'+x.id+'">Dismiss</button></div></div></article>';
-    }).join("");
+    var drafts=data.queue.filter(function(q){
+      return /^ONBOARDING_WELCOME:/i.test(String(q.reason||"")) && (q.status==="HOLD"||q.status==="APPROVED");
+    }).sort(function(a,b){return new Date(a.created_at)-new Date(b.created_at)});
+
+    var items=data.items.filter(function(x){return x.category==="ONBOARDING"}).filter(function(x){
+      return !drafts.some(function(q){return normaliseEod(q.client_name)===normaliseEod(x.client_name)});
+    });
+
+    if(!drafts.length&&!items.length){
+      el.innerHTML=empty("No onboarding welcomes waiting","New InboxLab onboarding welcome drafts will appear here automatically.");
+      return;
+    }
+
+    var html="";
+    if(drafts.length){
+      html+=drafts.map(function(q){return qCard(q,false)}).join("");
+    }
+    if(items.length){
+      html+=items.map(function(x){return itemCard(x,false)}).join("");
+    }
+    el.innerHTML=html;
   }
   function render(){
     var hold=data.queue.filter(function(x){return x.status==="HOLD"});
