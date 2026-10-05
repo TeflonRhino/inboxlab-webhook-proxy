@@ -50,6 +50,7 @@
     <button data-view="clients"><span>◎</span>Client Attention<span class="badge" id="navAttention">0</span></button>
     <button data-view="collections"><span>£</span>Collections</button>
     <button data-view="refunds"><span>↩</span>Refunds</button>
+    <button data-view="onboarding"><span>👋</span>Onboarding</button>
     <button data-view="calls"><span>◷</span>Calls</button>
     <button data-view="followups"><span>✓</span>Follow-ups</button>
     <button data-view="activity"><span>≡</span>Activity</button>
@@ -97,6 +98,7 @@
 
 <section id="view-collections" class="hidden"><div class="section-head"><h2>Collections</h2><span class="pill">Open actions</span></div><div class="stack" id="collectionList"></div></section>
 <section id="view-refunds" class="hidden"><div class="section-head"><h2>Refunds</h2><span class="pill">Open cases</span></div><div class="stack" id="refundList"></div></section>
+<section id="view-onboarding" class="hidden"><div class="section-head"><h2>Onboarding welcome workflow</h2><span class="pill">Calendar-triggered</span></div><div class="stack" id="onboardingList"></div></section>
 <section id="view-calls" class="hidden"><div class="section-head"><h2>Calls</h2><span class="pill">Surfaced by ChatGPT</span></div><div class="stack" id="callList"></div></section>
 <section id="view-followups" class="hidden"><div class="section-head"><h2>Follow-ups</h2><span class="pill">Open</span></div><div class="stack" id="followupList"></div></section>
 <section id="view-activity" class="hidden"><div class="section-head"><h2>Activity Log</h2><span class="pill">Audit trail</span></div><div class="panel"><div class="activity" id="activityList"></div></div></section>
@@ -113,6 +115,7 @@
     clients:["Client Attention","A visual priority board built from what I find across your connected systems."],
     collections:["Collections","Open revenue actions surfaced from your work context."],
     refunds:["Refunds","Cases that need context, conversation or a decision."],
+    onboarding:["Onboarding","Welcome drafts and reminders for newly booked onboarding calls."],
     calls:["Calls","Useful call prep and upcoming conversations."],
     followups:["Follow-ups","Promises and proactive touches you should not have to remember."],
     activity:["Activity","A simple audit trail of what you and I changed."]
@@ -139,7 +142,7 @@
       (x.summary?'<div class="item-summary">'+esc(x.summary)+'</div>':'')+
       '<div class="item-foot"><span>'+(x.due_at?'Due '+fmt(x.due_at):'Updated '+fmt(x.updated_at))+'</span><div><button class="btn" data-iresolve="DONE" data-id="'+x.id+'">Done</button> <button class="btn" data-iresolve="DISMISSED" data-id="'+x.id+'">Dismiss</button></div></div></article>';
   }
-  function labelCategory(c){return({CLIENT_ATTENTION:"Client attention",COLLECTION:"Collection",REFUND:"Refund",CALL:"Call",FOLLOW_UP:"Follow-up"})[c]||c}
+  function labelCategory(c){return({CLIENT_ATTENTION:"Client attention",COLLECTION:"Collection",REFUND:"Refund",CALL:"Call",FOLLOW_UP:"Follow-up",ONBOARDING:"Onboarding"})[c]||c}
   function eventIcon(t){if(t.indexOf("posted")>-1)return "✓";if(t.indexOf("approved")>-1)return "→";if(t.indexOf("created")>-1)return "+";if(t.indexOf("skipped")>-1)return "×";if(t.indexOf("edited")>-1)return "✎";return "•"}
   function activityRows(items,limit){
     var a=limit?items.slice(0,limit):items;if(!a.length)return empty("No activity yet","Actions you and I take will appear here.");
@@ -155,6 +158,20 @@
     document.getElementById("clientBoard").innerHTML=lanes.map(function(l){
       var a=items.filter(function(x){return x.priority===l[0]||(l[0]==="NORMAL"&&x.priority==="LOW")});
       return '<div class="lane"><div class="lane-head"><div class="lane-title">'+l[1]+'</div><div class="lane-count">'+a.length+'</div></div><div class="stack">'+(a.length?a.map(function(x){return itemCard(x,false)}).join(""):empty("Clear","Nothing in this lane."))+'</div></div>';
+    }).join("");
+  }
+  function renderOnboarding(){
+    var items=data.items.filter(function(x){return x.category==="ONBOARDING"});
+    var el=document.getElementById("onboardingList");
+    if(!items.length){el.innerHTML=empty("No onboarding welcomes waiting","New InboxLab onboarding bookings will appear here after the watcher sees them.");return}
+    el.innerHTML=items.map(function(x){
+      var hb=data.queue.filter(function(q){return q.client_name===x.client_name}).sort(function(a,b){return new Date(b.created_at)-new Date(a.created_at)})[0];
+      var hbStatus=hb?hb.status:"NOT CREATED";
+      var hbClass=hb?String(hb.status).toLowerCase():"skipped";
+      return '<article class="item-card"><div class="itop"><div><div class="item-title">'+esc(x.client_name||x.title)+'</div><div class="meta">'+esc(x.title)+'</div></div><span class="priority '+esc(x.priority)+'">'+esc(x.priority)+'</span></div>'+
+      (x.summary?'<div class="item-summary">'+esc(x.summary)+'</div>':'')+
+      '<div class="actions"><span class="pill '+hbClass+'">Heartbeat: '+esc(hbStatus)+'</span><span class="pill">Close SMS: placeholder</span></div>'+
+      '<div class="item-foot"><span>Updated '+fmt(x.updated_at)+'</span><div><button class="btn" data-iresolve="DONE" data-id="'+x.id+'">Done</button> <button class="btn" data-iresolve="DISMISSED" data-id="'+x.id+'">Dismiss</button></div></div></article>';
     }).join("");
   }
   function render(){
@@ -174,6 +191,7 @@
     document.getElementById("todayActivity").innerHTML=activityRows(data.activity,8);
     document.getElementById("activityList").innerHTML=activityRows(data.activity);
     filterQueue();renderClientBoard();
+    renderOnboarding();
     renderList("COLLECTION","collectionList","No collection actions","When I surface collectible revenue or payment follow-ups, they will live here.");
     renderList("REFUND","refundList","No refund cases","Refund context and next actions I surface will appear here.");
     renderList("CALL","callList","No call prep yet","Upcoming calls and useful prep will appear here when surfaced.");
