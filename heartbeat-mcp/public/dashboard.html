@@ -36,7 +36,7 @@
 .empty{border:1px dashed #d1d5db;background:rgba(255,255,255,.7);border-radius:14px;padding:16px;color:#6b7280;font-size:12px;line-height:1.5}.empty b{display:block;color:#374151;margin-bottom:3px}
 .notice{border:1px solid #dbeafe;background:#eff6ff;color:#1e40af;border-radius:13px;padding:11px 13px;font-size:12px;line-height:1.5;margin-top:10px}
 .select{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 9px;font-size:12px}.hidden{display:none!important}.toast{position:fixed;right:16px;bottom:16px;background:#111827;color:#fff;border-radius:11px;padding:10px 13px;font-size:12px;box-shadow:0 15px 35px rgba(0,0,0,.22);opacity:0;transform:translateY(8px);pointer-events:none;transition:.2s}.toast.show{opacity:1;transform:none}
-.messages-workspace{display:grid;grid-template-columns:minmax(220px,.65fr) minmax(0,1.35fr);gap:12px}.message-search{display:flex;gap:6px;margin:10px 0}.message-search input{flex:1;min-width:0;border:1px solid var(--line);border-radius:10px;padding:9px;background:var(--soft)}.message-match{width:100%;text-align:left}.message-match.active{border-color:#93c5fd;background:var(--bluebg)}.message-match .client,#messageClient{overflow-wrap:anywhere}.message-match .meta{display:block;overflow-wrap:anywhere}.message-history{max-height:440px;overflow-y:auto;display:grid;gap:9px;margin:12px 0}.message-text{white-space:pre-wrap;overflow-wrap:anywhere}.message-status{font-size:12px;color:var(--muted);margin-top:9px;overflow-wrap:anywhere}.message-status.error{color:var(--red)}
+.messages-workspace{display:grid;grid-template-columns:minmax(220px,.65fr) minmax(0,1.35fr);gap:12px}.message-search{display:flex;gap:6px;margin:10px 0}.message-search input{flex:1;min-width:0;border:1px solid var(--line);border-radius:10px;padding:9px;background:var(--soft)}.message-match{width:100%;text-align:left}.message-match.active{border-color:#93c5fd;background:var(--bluebg)}.message-match .client,#messageClient{overflow-wrap:anywhere}.message-match .meta{display:block;overflow-wrap:anywhere}.message-history{max-height:440px;overflow-y:auto;display:grid;gap:9px;margin:12px 0}.message-text{white-space:pre-wrap;overflow-wrap:anywhere}.mention-box{position:relative}.mention-menu{position:absolute;left:0;right:0;bottom:100%;margin-bottom:6px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.12);max-height:220px;overflow:auto;z-index:30}.mention-option{display:block;width:100%;text-align:left;border:0;background:#fff;padding:9px 11px;cursor:pointer}.mention-option:hover,.mention-option.active{background:#f3f4f6}.mention-option b{display:block}.mention-option span{font-size:12px;color:#6b7280}.message-status{font-size:12px;color:var(--muted);margin-top:9px;overflow-wrap:anywhere}.message-status.error{color:var(--red)}
 @media(max-width:1050px){.messages-workspace{grid-template-columns:1fr}}
 @media(max-width:1050px){.workspace{grid-template-columns:1fr}.attention-grid{grid-template-columns:1fr 1fr}.stats{grid-template-columns:1fr 1fr}.app{grid-template-columns:82px minmax(0,1fr)}.sidebar{padding:16px 9px}.brand b{font-size:10px}.brand small,.side-note{display:none}.nav button{font-size:0;justify-content:center;padding:12px}.nav button span:first-child{font-size:17px}.nav .badge{display:none}.main{padding:22px}}
 @media(max-width:640px){.app{display:block}.sidebar{position:sticky;top:0;z-index:10;display:flex;flex-direction:row;align-items:center;gap:7px;padding:9px 10px;overflow-x:auto}.brand{min-width:max-content;padding:0 4px}.brand small{display:none}.nav{display:flex;gap:3px}.nav button{min-width:42px;padding:9px}.spacer,.logout{display:none}.main{padding:16px 12px 28px}.top{align-items:center}.h1{font-size:24px}.sub{display:none}.stats{grid-template-columns:1fr 1fr}.stat{padding:12px}.stat .value{font-size:23px}.attention-grid{grid-template-columns:1fr}.top-actions .btn{padding:8px 9px}.workspace{gap:10px}.actions .btn{flex:1}}
@@ -111,7 +111,10 @@
       <div id="messageHistory" class="message-history" aria-live="polite"><div class="empty">Select a chat to view recent messages.</div></div>
       <form id="messageComposeForm">
         <label class="meta" for="messageDraft">Your message</label>
-        <textarea class="draft" id="messageDraft" placeholder="Type your message here…" disabled required></textarea>
+        <div class="mention-box">
+          <div id="mentionMenu" class="mention-menu hidden"></div>
+          <textarea class="draft" id="messageDraft" placeholder="Type your message here…" disabled required></textarea>
+        </div>
         <div class="actions"><button class="btn primary" id="sendMessage" type="submit" disabled>Review &amp; Send</button></div>
       </form>
       <div id="messageStatus" class="message-status" role="status"></div>
@@ -169,7 +172,9 @@
   // Keep messaging state separate from the overview's periodic renders.
   var selectedChat=null, messageMatches=[], messageDrafts=Object.create(null);
   var searchVersion=0, contextVersion=0, messageSending=false;
+  var mentionUsers=[],mentionStart=-1,mentionEnd=-1,mentionVersion=0;
   var messageDraft=document.getElementById("messageDraft");
+  var mentionMenu=document.getElementById("mentionMenu");
   var sendMessage=document.getElementById("sendMessage");
   var refreshMessages=document.getElementById("refreshMessages");
   function messageStatus(text,isError){var el=document.getElementById("messageStatus");el.textContent=text;el.classList.toggle("error",!!isError)}
@@ -211,7 +216,36 @@
     document.getElementById("messageChannel").textContent="Heartbeat chat · "+chat.id;
     messageStatus("");renderMessageMatches();loadMessageContext();
   });
-  messageDraft.addEventListener("input",function(){if(selectedChat)messageDrafts[selectedChat.id]=messageDraft.value;updateMessageControls()});
+  function hideMentions(){mentionMenu.classList.add("hidden");mentionMenu.innerHTML="";mentionUsers=[];mentionStart=-1;mentionEnd=-1}
+  function renderMentions(){
+    if(!mentionUsers.length){hideMentions();return}
+    mentionMenu.innerHTML=mentionUsers.map(function(u,i){return '<button type="button" class="mention-option" data-mention-index="'+i+'"><b>@'+esc(u.name)+'</b><span>Heartbeat user</span></button>'}).join("");
+    mentionMenu.classList.remove("hidden");
+  }
+  async function maybeSearchMentions(){
+    var value=messageDraft.value,pos=messageDraft.selectionStart||0,before=value.slice(0,pos);
+    var m=before.match(/(^|\s)@([^\s@]{0,40})$/);
+    if(!m){hideMentions();return}
+    var q=m[2]||"";
+    mentionStart=pos-q.length-1;mentionEnd=pos;
+    if(!q){hideMentions();return}
+    var v=++mentionVersion;
+    try{
+      var r=await api("/dashboard/api/messages/mentions?q="+encodeURIComponent(q));
+      if(v!==mentionVersion)return;
+      mentionUsers=r.users||[];renderMentions();
+    }catch(e){hideMentions()}
+  }
+  messageDraft.addEventListener("input",function(){if(selectedChat)messageDrafts[selectedChat.id]=messageDraft.value;updateMessageControls();maybeSearchMentions()});
+  messageDraft.addEventListener("blur",function(){setTimeout(hideMentions,120)});
+  mentionMenu.addEventListener("mousedown",function(e){
+    var b=e.target.closest("[data-mention-index]");if(!b)return;e.preventDefault();
+    var u=mentionUsers[Number(b.dataset.mentionIndex)];if(!u||mentionStart<0)return;
+    var before=messageDraft.value.slice(0,mentionStart),after=messageDraft.value.slice(mentionEnd);
+    messageDraft.value=before+"@"+u.name+" "+after;
+    var p=(before+"@"+u.name+" ").length;messageDraft.focus();messageDraft.setSelectionRange(p,p);
+    if(selectedChat)messageDrafts[selectedChat.id]=messageDraft.value;hideMentions();updateMessageControls();
+  });
   refreshMessages.addEventListener("click",loadMessageContext);
   document.getElementById("messageComposeForm").addEventListener("submit",async function(e){
     e.preventDefault();if(messageSending)return;
