@@ -811,7 +811,7 @@
     var message=document.getElementById("eodDraft").value.trim();
     if(!message){toast("Generate or write the report first");return}
     if(!confirm("Send this exact EOD report to #3-csm-eod-reports now?"))return;
-    try{this.disabled=true;await api("/dashboard/api/eod/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:message})});toast("Approved — ChatGPT will send this to Slack");await load()}catch(e){toast(e.message)}finally{this.disabled=false}
+    try{this.disabled=true;await api("/dashboard/api/eod/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:message})});toast("EOD sent to Slack");await load()}catch(e){toast(e.message)}finally{this.disabled=false}
   });
   document.getElementById("holdQueue").addEventListener("click",async function(e){
     var b=e.target.closest("[data-qaction]");if(!b)return;var id=Number(b.dataset.id),act=b.dataset.qaction,card=document.querySelector('[data-qcard="'+id+'"]');
