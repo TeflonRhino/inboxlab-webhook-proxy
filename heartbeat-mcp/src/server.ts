@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 const HEARTBEAT_BASE_URL = "https://api.heartbeat.chat/v0";
 const HEARTBEAT_API_KEY = process.env.HEARTBEAT_API_KEY;
 const HEARTBEAT_WEB_TOKEN = process.env.HEARTBEAT_WEB_TOKEN;
+const CALENDLY_ACCESS_TOKEN = process.env.CALENDLY_ACCESS_TOKEN;
 const MCP_PATH_TOKEN = process.env.MCP_PATH_TOKEN;
 const PORT = Number(process.env.PORT || 3000);
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -869,6 +870,64 @@ app.post("/dashboard/api/items/:id/resolve", requireDashboardAuth, async (req, r
   }
 });
 
+
+app.get("/dashboard/api/calendly/event-types", requireDashboardAuth, async (_req, res) => {
+  try {
+    if (!CALENDLY_ACCESS_TOKEN) return res.status(503).json({ error: "CALENDLY_ACCESS_TOKEN is not configured" });
+
+    const headers = {
+      Authorization: `Bearer ${CALENDLY_ACCESS_TOKEN}`,
+      Accept: "application/json"
+    };
+
+    const meResponse = await fetch("https://api.calendly.com/users/me", {
+      headers,
+      signal: AbortSignal.timeout(15000)
+    });
+    const meText = await meResponse.text();
+    let meBody: any;
+    try { meBody = meText ? JSON.parse(meText) : null; } catch { meBody = null; }
+    if (!meResponse.ok || !meBody?.resource?.uri) {
+      if (meResponse.status === 401) return res.status(401).json({ error: "Calendly token expired or is invalid — update CALENDLY_ACCESS_TOKEN in Render." });
+      return res.status(502).json({ error: `Calendly user lookup failed ${meResponse.status}` });
+    }
+
+    const url = new URL("https://api.calendly.com/event_types");
+    url.searchParams.set("user", meBody.resource.uri);
+    url.searchParams.set("active", "true");
+    url.searchParams.set("count", "100");
+    url.searchParams.set("sort", "name:asc");
+
+    const eventsResponse = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(15000)
+    });
+    const eventsText = await eventsResponse.text();
+    let eventsBody: any;
+    try { eventsBody = eventsText ? JSON.parse(eventsText) : null; } catch { eventsBody = null; }
+    if (!eventsResponse.ok) {
+      if (eventsResponse.status === 401) return res.status(401).json({ error: "Calendly token expired or is invalid — update CALENDLY_ACCESS_TOKEN in Render." });
+      return res.status(502).json({ error: `Calendly event type lookup failed ${eventsResponse.status}` });
+    }
+
+    const eventTypes = (Array.isArray(eventsBody?.collection) ? eventsBody.collection : [])
+      .filter((e: any) => e?.active && e?.scheduling_url)
+      .map((e: any) => ({
+        uri: e.uri,
+        name: e.name || "Untitled event",
+        duration: e.duration || null,
+        scheduling_url: e.scheduling_url,
+        kind: e.kind || null
+      }));
+
+    res.json({
+      user: { name: meBody.resource.name, scheduling_url: meBody.resource.scheduling_url },
+      event_types: eventTypes
+    });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to load Calendly event types" });
+  }
+});
 
 app.get("/dashboard/api/messages/mentions", requireDashboardAuth, async (req, res) => {
   try {
