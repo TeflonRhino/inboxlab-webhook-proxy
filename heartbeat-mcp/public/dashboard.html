@@ -467,7 +467,7 @@
       var setup=typeCount(/setup/i);
       var launch=eventInvitees.filter(function(x){return /launch/i.test(String(x.event.name||""))&&!/post/i.test(String(x.event.name||""))}).length;
       var postLaunch=typeCount(/post.?launch/i);
-      var support=typeCount(/support|check.?in/i);
+      var support=typeCount(/support|check.?in|speak with (?:our|my) team|speak with team/i);
 
       var lines=[];
       lines.push("*End of day report: "+new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",year:"numeric"}).format(base)+"*");
