@@ -36,6 +36,8 @@
 .empty{border:1px dashed #d1d5db;background:rgba(255,255,255,.7);border-radius:14px;padding:16px;color:#6b7280;font-size:12px;line-height:1.5}.empty b{display:block;color:#374151;margin-bottom:3px}
 .notice{border:1px solid #dbeafe;background:#eff6ff;color:#1e40af;border-radius:13px;padding:11px 13px;font-size:12px;line-height:1.5;margin-top:10px}
 .select{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 9px;font-size:12px}.hidden{display:none!important}.toast{position:fixed;right:16px;bottom:16px;background:#111827;color:#fff;border-radius:11px;padding:10px 13px;font-size:12px;box-shadow:0 15px 35px rgba(0,0,0,.22);opacity:0;transform:translateY(8px);pointer-events:none;transition:.2s}.toast.show{opacity:1;transform:none}
+.messages-workspace{display:grid;grid-template-columns:minmax(220px,.65fr) minmax(0,1.35fr);gap:12px}.message-search{display:flex;gap:6px;margin:10px 0}.message-search input{flex:1;min-width:0;border:1px solid var(--line);border-radius:10px;padding:9px;background:var(--soft)}.message-match{width:100%;text-align:left}.message-match.active{border-color:#93c5fd;background:var(--bluebg)}.message-match .client,#messageClient{overflow-wrap:anywhere}.message-match .meta{display:block;overflow-wrap:anywhere}.message-history{max-height:440px;overflow-y:auto;display:grid;gap:9px;margin:12px 0}.message-text{white-space:pre-wrap;overflow-wrap:anywhere}.message-status{font-size:12px;color:var(--muted);margin-top:9px;overflow-wrap:anywhere}.message-status.error{color:var(--red)}
+@media(max-width:1050px){.messages-workspace{grid-template-columns:1fr}}
 @media(max-width:1050px){.workspace{grid-template-columns:1fr}.attention-grid{grid-template-columns:1fr 1fr}.stats{grid-template-columns:1fr 1fr}.app{grid-template-columns:82px minmax(0,1fr)}.sidebar{padding:16px 9px}.brand b{font-size:10px}.brand small,.side-note{display:none}.nav button{font-size:0;justify-content:center;padding:12px}.nav button span:first-child{font-size:17px}.nav .badge{display:none}.main{padding:22px}}
 @media(max-width:640px){.app{display:block}.sidebar{position:sticky;top:0;z-index:10;display:flex;flex-direction:row;align-items:center;gap:7px;padding:9px 10px;overflow-x:auto}.brand{min-width:max-content;padding:0 4px}.brand small{display:none}.nav{display:flex;gap:3px}.nav button{min-width:42px;padding:9px}.spacer,.logout{display:none}.main{padding:16px 12px 28px}.top{align-items:center}.h1{font-size:24px}.sub{display:none}.stats{grid-template-columns:1fr 1fr}.stat{padding:12px}.stat .value{font-size:23px}.attention-grid{grid-template-columns:1fr}.top-actions .btn{padding:8px 9px}.workspace{gap:10px}.actions .btn{flex:1}}
 </style>
@@ -47,6 +49,7 @@
   <nav class="nav" id="nav">
     <button class="active" data-view="today"><span>⌂</span>Today</button>
     <button data-view="hold"><span>💬</span>Hold Queue<span class="badge" id="navHold">0</span></button>
+    <button data-view="messages" title="Messages" aria-label="Messages"><span>✉</span>Messages</button>
     <button data-view="clients"><span>◎</span>Client Attention<span class="badge" id="navAttention">0</span></button>
     <button data-view="collections"><span>£</span>Collections</button>
     <button data-view="refunds"><span>↩</span>Refunds</button>
@@ -92,6 +95,30 @@
   <div class="queue" id="holdQueue"></div>
 </section>
 
+<section id="view-messages" class="hidden">
+  <div class="messages-workspace">
+    <div class="panel">
+      <div class="section-head"><h2>Find a Heartbeat chat</h2></div>
+      <form id="messageSearchForm">
+        <label class="meta" for="messageSearch">Client name</label>
+        <div class="message-search"><input id="messageSearch" type="search" placeholder="Search by client name" autocomplete="off" required><button class="btn primary" type="submit">Search</button></div>
+      </form>
+      <div id="messageResults" class="stack" aria-live="polite"><div class="empty">Search for a client to see matching Heartbeat chats.</div></div>
+    </div>
+    <div class="panel">
+      <div class="section-head"><h2 id="messageClient">Conversation</h2><button class="btn" id="refreshMessages" disabled>↻ Refresh chat</button></div>
+      <div id="messageChannel" class="meta"></div>
+      <div id="messageHistory" class="message-history" aria-live="polite"><div class="empty">Select a chat to view recent messages.</div></div>
+      <form id="messageComposeForm">
+        <label class="meta" for="messageDraft">Your message</label>
+        <textarea class="draft" id="messageDraft" placeholder="Type your message here…" disabled required></textarea>
+        <div class="actions"><button class="btn primary" id="sendMessage" type="submit" disabled>Review &amp; Send</button></div>
+      </form>
+      <div id="messageStatus" class="message-status" role="status"></div>
+    </div>
+  </div>
+</section>
+
 <section id="view-clients" class="hidden">
   <div class="section-head"><h2>Client Attention</h2><span class="pill">ChatGPT-fed</span></div>
   <div class="attention-grid" id="clientBoard"></div>
@@ -124,6 +151,7 @@
   var titles={
     today:["Today","Your shortest useful view of what needs attention."],
     hold:["Hold Queue","Review, edit and approve drafts without accidentally sending them."],
+    messages:["Messages","Find a client, review their Heartbeat conversation and send a message."],
     clients:["Client Attention","A visual priority board built from what I find across your connected systems."],
     collections:["Collections","Open revenue actions surfaced from your work context."],
     refunds:["Refunds","Cases that need context, conversation or a decision."],
@@ -138,6 +166,66 @@
   function toast(msg){var x=document.getElementById("toast");x.textContent=msg;x.classList.add("show");setTimeout(function(){x.classList.remove("show")},2200)}
   async function api(url,opts){var r=await fetch(url,opts||{});if(r.status===401){location.href="/dashboard/login";throw new Error("Signed out")}var j=await r.json().catch(function(){return{}});if(!r.ok)throw new Error(j.error||"Something went wrong");return j}
   function empty(title,text){return '<div class="empty"><b>'+esc(title)+'</b>'+esc(text)+'</div>'}
+  // Keep messaging state separate from the overview's periodic renders.
+  var selectedChat=null, messageMatches=[], messageDrafts=Object.create(null);
+  var searchVersion=0, contextVersion=0, messageSending=false;
+  var messageDraft=document.getElementById("messageDraft");
+  var sendMessage=document.getElementById("sendMessage");
+  var refreshMessages=document.getElementById("refreshMessages");
+  function messageStatus(text,isError){var el=document.getElementById("messageStatus");el.textContent=text;el.classList.toggle("error",!!isError)}
+  function updateMessageControls(){messageDraft.disabled=!selectedChat||messageSending;sendMessage.disabled=!selectedChat||messageSending||!messageDraft.value.trim();refreshMessages.disabled=!selectedChat||messageSending;sendMessage.textContent=messageSending?"Sending…":"Review & Send";document.querySelectorAll("[data-message-match]").forEach(function(b){b.disabled=messageSending})}
+  function renderMessageMatches(){
+    document.getElementById("messageResults").innerHTML=messageMatches.length?messageMatches.map(function(ch,i){return '<button class="item-card message-match '+(selectedChat&&selectedChat.id===ch.id?'active':'')+'" data-message-match="'+i+'" aria-pressed="'+Boolean(selectedChat&&selectedChat.id===ch.id)+'"><span class="client">'+esc(ch.name||"Unnamed chat")+'</span><span class="meta">Heartbeat chat · '+esc(ch.id)+'</span></button>'}).join(""):empty("No matching chats","Try another name. A new client's Heartbeat chat may not exist yet.");
+    updateMessageControls();
+  }
+  async function searchMessages(){
+    var q=document.getElementById("messageSearch").value.trim(),version=++searchVersion;
+    if(!q){document.getElementById("messageResults").innerHTML=empty("Enter a client name","Search for a client to find their Heartbeat chat.");return}
+    document.getElementById("messageResults").innerHTML=empty("Searching…","Finding matching Heartbeat chats.");
+    try{var result=await api("/dashboard/api/messages/search?q="+encodeURIComponent(q));if(version!==searchVersion)return;messageMatches=result.matches||[];renderMessageMatches()}
+    catch(e){if(version===searchVersion)document.getElementById("messageResults").innerHTML=empty("Search failed",e.message+" Try searching again.")}
+  }
+  async function loadMessageContext(){
+    if(!selectedChat)return;
+    var chat=selectedChat,version=++contextVersion;
+    var history=document.getElementById("messageHistory");
+    history.setAttribute("aria-busy","true");
+    history.innerHTML=empty("Loading conversation…","Fetching recent Heartbeat messages.");
+    try{
+      var result=await api("/dashboard/api/messages/"+encodeURIComponent(chat.id)+"/context");
+      if(version!==contextVersion||selectedChat!==chat)return;
+      var messages=(result.messages||[]).slice().sort(function(a,b){return (Date.parse(a.timestamp)||0)-(Date.parse(b.timestamp)||0)});
+      history.innerHTML=messages.length?messages.map(function(m){return '<article class="item-card"><div class="item-title">'+esc(m.sender||"Unknown")+'</div><div class="meta">'+esc(fmt(m.timestamp))+'</div><div class="preview message-text">'+esc(m.text)+'</div>'+((m.attachments||[]).length?'<div class="meta message-text">Attachments: '+(m.attachments||[]).map(function(a){return esc(a.name||a.type||"Attachment")}).join(", ")+'</div>':'')+'</article>'}).join(""):empty("No messages yet","You can start the conversation below.");
+      history.scrollTop=history.scrollHeight;
+    }catch(e){if(version===contextVersion&&selectedChat===chat)history.innerHTML=empty("Conversation could not refresh",e.message+" Use Refresh chat to try again.")}
+    finally{if(version===contextVersion)history.setAttribute("aria-busy","false")}
+  }
+  document.getElementById("messageSearchForm").addEventListener("submit",function(e){e.preventDefault();searchMessages()});
+  document.getElementById("messageSearch").addEventListener("input",function(){++searchVersion});
+  document.getElementById("messageResults").addEventListener("click",function(e){
+    var b=e.target.closest("[data-message-match]");if(!b||messageSending)return;
+    var chat=messageMatches[Number(b.dataset.messageMatch)];if(!chat)return;
+    if(selectedChat)messageDrafts[selectedChat.id]=messageDraft.value;
+    selectedChat=chat;messageDraft.value=messageDrafts[chat.id]||"";
+    document.getElementById("messageClient").textContent=chat.name||"Unnamed chat";
+    document.getElementById("messageChannel").textContent="Heartbeat chat · "+chat.id;
+    messageStatus("");renderMessageMatches();loadMessageContext();
+  });
+  messageDraft.addEventListener("input",function(){if(selectedChat)messageDrafts[selectedChat.id]=messageDraft.value;updateMessageControls()});
+  refreshMessages.addEventListener("click",loadMessageContext);
+  document.getElementById("messageComposeForm").addEventListener("submit",async function(e){
+    e.preventDefault();if(messageSending)return;
+    var chat=selectedChat,message=messageDraft.value.trim();
+    if(!chat||!message){messageStatus("Select a chat and type a message before sending.",true);return}
+    if(!confirm("Send this exact message to "+(chat.name||"Unnamed chat")+" (Heartbeat chat "+chat.id+")?\n\n"+message))return;
+    messageSending=true;updateMessageControls();messageStatus("Sending to Heartbeat…");
+    try{
+      await api("/dashboard/api/messages/"+encodeURIComponent(chat.id)+"/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:message,client_name:chat.name||""})});
+      messageDraft.value="";delete messageDrafts[chat.id];messageStatus("Message sent to Heartbeat.");toast("Message sent to Heartbeat");
+      await loadMessageContext();
+    }catch(err){messageStatus("Send could not be confirmed: "+err.message+". Your draft is saved here. Refresh the chat before retrying to check whether it arrived.",true)}
+    finally{messageSending=false;updateMessageControls()}
+  });
   function qCard(x,compact){
     var editable=x.status==="HOLD"||x.status==="APPROVED";
     var missing=!x.channel_id;
@@ -252,7 +340,7 @@
   function switchView(view){current=view;document.querySelectorAll("#nav button").forEach(function(b){b.classList.toggle("active",b.dataset.view===view)});document.querySelectorAll("main section[id^='view-']").forEach(function(s){s.classList.toggle("hidden",s.id!=="view-"+view)});document.getElementById("viewTitle").textContent=titles[view][0];document.getElementById("viewSub").textContent=titles[view][1];}
   document.getElementById("nav").addEventListener("click",function(e){var b=e.target.closest("button[data-view]");if(b)switchView(b.dataset.view)});
   document.body.addEventListener("click",function(e){var j=e.target.closest("[data-jump]");if(j)switchView(j.dataset.jump)});
-  document.getElementById("refresh").addEventListener("click",load);
+  document.getElementById("refresh").addEventListener("click",function(){if(current==="messages"){if(selectedChat&&!messageSending)loadMessageContext();else if(!selectedChat)searchMessages()}else load()});
   document.getElementById("queueFilter").addEventListener("change",filterQueue);
   document.getElementById("generateEod").addEventListener("click",generateEod);
   document.getElementById("refreshEod").addEventListener("click",generateEod);
