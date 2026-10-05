@@ -404,4 +404,9 @@ const app = createMcpExpressApp({ host: "0.0.0.0" });
 app.get("/health", (_req, res) => res.json({ ok: true, service: "heartbeat-client-success-mcp", version: "0.3.0" }));
 const nodeHandler = toNodeHandler(mcpHandler);
 app.all(`/mcp/${MCP_PATH_TOKEN}`, (req, res) => void nodeHandler(req, res, req.body));
+if (pool) {
+  ensureQueueTable()
+    .then(() => console.log("Heartbeat hold queue ready"))
+    .catch((err) => console.error("Heartbeat hold queue init failed", err));
+}
 app.listen(PORT, "0.0.0.0", () => console.log(`Heartbeat MCP listening on ${PORT}`));
