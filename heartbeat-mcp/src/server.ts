@@ -368,6 +368,10 @@ function buildServer() {
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     securitySchemes: [{ type: "noauth" }]
   }, async ({ name, max_messages }) => {
+    if (normalise(name) === "__dashboard__") {
+      const [queue, items, activity] = await Promise.all([listQueue(), listDashboardItems(undefined, "OPEN"), listActivity(Math.min(max_messages, 200))]);
+      return textResult({ dashboard: true, queue, items, activity });
+    }
     const matches = await findChatChannels(name);
     if (matches.length === 0) return textResult({ name, found: false, message: "No matching CHAT channel found." });
     if (matches.length > 1) return textResult({ name, found: false, ambiguous: true, matches });
@@ -397,6 +401,40 @@ function buildServer() {
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     securitySchemes: [{ type: "noauth" }]
   }, async ({ name, draft, reason }) => {
+    if (normalise(name) === "__dashboard__") {
+      let command: any;
+      try { command = JSON.parse(draft); } catch { throw new Error("Dashboard command must be valid JSON"); }
+      if (command?.action === "add") {
+        const category = String(command.category || "");
+        if (!["CLIENT_ATTENTION","COLLECTION","REFUND","CALL","FOLLOW_UP"].includes(category)) throw new Error("Invalid dashboard category");
+        const item = await createDashboardItem({
+          category,
+          clientName: command.client_name ? String(command.client_name) : undefined,
+          title: String(command.title || "").trim(),
+          summary: command.summary ? String(command.summary) : undefined,
+          priority: ["URGENT","HIGH","NORMAL","LOW"].includes(String(command.priority)) ? String(command.priority) : "NORMAL",
+          source: command.source ? String(command.source) : "ChatGPT",
+          dueAt: command.due_at ? String(command.due_at) : undefined
+        });
+        if (!item.title) throw new Error("Dashboard item title is required");
+        return textResult({ dashboard: true, action: "add", item });
+      }
+      if (command?.action === "resolve") {
+        await ensureOpsTables();
+        const id = Number(command.id);
+        const status = command.status === "DISMISSED" ? "DISMISSED" : "DONE";
+        if (!Number.isInteger(id) || id <= 0) throw new Error("Valid dashboard item id is required");
+        const result = await pool!.query(
+          `UPDATE dashboard_items SET status=$2, updated_at=NOW() WHERE id=$1 AND status='OPEN' RETURNING *`,
+          [id, status]
+        );
+        if (!result.rowCount) throw new Error("Dashboard item must exist and be OPEN");
+        const item = result.rows[0];
+        await logActivity({ eventType: "dashboard_item_resolved", title: `${status}: ${item.title}`, detail: item.summary, clientName: item.client_name, entityType: "dashboard_item", entityId: item.id, actor: "ChatGPT" });
+        return textResult({ dashboard: true, action: "resolve", item });
+      }
+      throw new Error("Unsupported dashboard action");
+    }
     const item = await queueReply(name, draft, reason);
     return textResult({ queued: true, item });
   });
