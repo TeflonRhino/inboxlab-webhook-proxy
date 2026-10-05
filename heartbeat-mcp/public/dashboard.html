@@ -260,7 +260,7 @@
     var message=document.getElementById("eodDraft").value.trim();
     if(!message){toast("Generate or write the report first");return}
     if(!confirm("Send this exact EOD report to #3-csm-eod-reports now?"))return;
-    try{this.disabled=true;await api("/dashboard/api/eod/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:message})});toast("EOD report sent to Slack");await load()}catch(e){toast(e.message)}finally{this.disabled=false}
+    try{this.disabled=true;await api("/dashboard/api/eod/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:message})});toast("Approved — ChatGPT will send this to Slack");await load()}catch(e){toast(e.message)}finally{this.disabled=false}
   });
   document.getElementById("holdQueue").addEventListener("click",async function(e){
     var b=e.target.closest("[data-qaction]");if(!b)return;var id=Number(b.dataset.id),act=b.dataset.qaction,card=document.querySelector('[data-qcard="'+id+'"]');
@@ -284,7 +284,7 @@
     var n=e.target.closest("[data-noshow]");
     if(n){
       if(!confirm("Mark this client as a no-show in Calendly? Your existing Calendly no-show workflow may send its reschedule email."))return;
-      try{n.disabled=true;await api("/dashboard/api/items/"+n.dataset.noshow+"/no-show",{method:"POST"});toast("Marked as no-show in Calendly");await load()}catch(err){toast(err.message);n.disabled=false}
+      try{n.disabled=true;await api("/dashboard/api/items/"+n.dataset.noshow+"/no-show",{method:"POST"});toast("Approved — ChatGPT will mark this as a no-show");await load()}catch(err){toast(err.message);n.disabled=false}
       return;
     }
     var b=e.target.closest("[data-iresolve]");if(!b)return;
