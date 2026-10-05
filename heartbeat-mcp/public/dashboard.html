@@ -449,24 +449,53 @@
       lines.push("*Post-Launch / Support Calls:* "+post);
 
       function cleanSummary(s){
-        var t=String(s||"").replace(/[\n\r\t]+/g," ").replace(/\s+/g," ").trim();
+        var t=String(s||"");
+        t=t.replace(/\[([^\]]+)\]\([^\)]+\)/g,"$1");
+        t=t.replace(/https?:\/\/\S+/g,"");
+        t=t.replace(/[#*_>\`~]+/g," ");
+        t=t.replace(/\s+/g," ").trim();
+        t=t.replace(/^Meeting Purpose\s*/i,"").replace(/^Key Takeaways\s*/i,"");
         if(!t)return "";
-        return t.length>220?t.slice(0,217)+"…":t;
+        var cut=t.search(/\bNext(?: Steps?)?:/i);
+        if(cut>40)t=t.slice(0,cut).trim();
+        return t.length>170?t.slice(0,167).replace(/[,:;\-\s]+$/,"")+"…":t;
+      }
+      function calendlyNameForEmail(email){
+        if(!email)return "";
+        var target=String(email).toLowerCase();
+        for(var i=0;i<eventInvitees.length;i++){
+          var inv=eventInvitees[i].invitee||{};
+          if(inv.email&&String(inv.email).toLowerCase()===target&&inv.name)return inv.name;
+        }
+        return "";
       }
       function meetingPerson(m){
-        var ext=(m.calendar_invitees||[]).find(function(i){return i&&i.is_external&&i.name});
-        if(ext)return ext.name;
-        var named=(m.calendar_invitees||[]).find(function(i){return i&&i.name});
-        if(named)return named.name;
+        var ext=(m.calendar_invitees||[]).find(function(i){return i&&i.is_external&&(i.name||i.email)});
+        if(ext){
+          if(ext.name&&String(ext.name).indexOf("@")<0)return ext.name;
+          var matched=calendlyNameForEmail(ext.email||ext.name);
+          if(matched)return matched;
+          return ext.name||ext.email;
+        }
+        var named=(m.calendar_invitees||[]).find(function(i){return i&&(i.name||i.email)});
+        if(named){
+          if(named.name&&String(named.name).indexOf("@")<0)return named.name;
+          var matched2=calendlyNameForEmail(named.email||named.name);
+          if(matched2)return matched2;
+          return named.name||named.email;
+        }
         return m.title||m.meeting_title||"Client call";
       }
-
+      function cleanAction(s){
+        var t=String(s||"").replace(/\[([^\]]+)\]\([^\)]+\)/g,"$1").replace(/https?:\/\/\S+/g,"").replace(/[\n\r\t]+/g," ").replace(/\s+/g," ").trim();
+        return t.length>120?t.slice(0,117).replace(/[,:;\-\s]+$/,"")+"…":t;
+      }
       var work=[];
 
       fathomMeetings.forEach(function(m){
         var name=meetingPerson(m);
         var summary=cleanSummary(m.summary);
-        var next=(m.action_items||[]).filter(function(a){return a&&a.description&&!a.completed}).slice(0,2).map(function(a){return String(a.description).trim()});
+        var next=(m.action_items||[]).filter(function(a){return a&&a.description&&!a.completed}).slice(0,2).map(function(a){return cleanAction(a.description)}).filter(Boolean);
         var text=name+" — call completed";
         if(summary)text+=": "+summary;
         if(next.length)text+=" Next: "+next.join("; ");
