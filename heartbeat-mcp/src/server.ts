@@ -169,7 +169,7 @@ async function sendHeartbeatMessage(channelID: string, text: string) {
       Accept: "application/json",
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ content: text, from: HEARTBEAT_FROM_USER_ID }),
+    body: JSON.stringify({ text, from: HEARTBEAT_FROM_USER_ID }),
     signal: AbortSignal.timeout(20000)
   });
   if (!response.ok) {
