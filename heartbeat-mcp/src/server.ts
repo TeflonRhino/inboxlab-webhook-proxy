@@ -108,6 +108,20 @@ async function ensureOpsTables() {
       result_note TEXT
     );
     CREATE INDEX IF NOT EXISTS dashboard_actions_status_idx ON dashboard_actions(status,created_at);
+
+    CREATE TABLE IF NOT EXISTS dashboard_call_overrides (
+      id BIGSERIAL PRIMARY KEY,
+      calendly_invitee_uri TEXT NOT NULL UNIQUE,
+      calendly_event_uri TEXT,
+      client_name TEXT,
+      call_title TEXT,
+      call_start_time TIMESTAMPTZ,
+      status TEXT NOT NULL,
+      note TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS dashboard_call_overrides_start_idx ON dashboard_call_overrides(call_start_time,status);
   `);
 }
 
@@ -833,7 +847,7 @@ app.get("/dashboard/api/eod/context", requireDashboardAuth, async (req, res) => 
       return res.status(400).json({ error: "Valid start and end timestamps are required" });
     }
 
-    const [activityResult, actionsResult, itemsResult] = await Promise.all([
+    const [activityResult, actionsResult, itemsResult, overridesResult] = await Promise.all([
       pool!.query(
         `SELECT * FROM dashboard_activity WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz ORDER BY created_at ASC`,
         [start, end]
@@ -850,6 +864,12 @@ app.get("/dashboard/api/eod/context", requireDashboardAuth, async (req, res) => 
          WHERE created_at < $2::timestamptz
            AND (updated_at >= $1::timestamptz OR due_at >= $1::timestamptz)
          ORDER BY updated_at ASC`,
+        [start, end]
+      ),
+      pool!.query(
+        `SELECT * FROM dashboard_call_overrides
+         WHERE call_start_time >= $1::timestamptz AND call_start_time < $2::timestamptz
+         ORDER BY call_start_time ASC`,
         [start, end]
       )
     ]);
@@ -982,11 +1002,62 @@ app.get("/dashboard/api/eod/context", requireDashboardAuth, async (req, res) => 
       activity: activityResult.rows,
       actions: actionsResult.rows,
       items: itemsResult.rows,
+      call_overrides: overridesResult.rows,
       calendly,
       fathom
     });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to build EOD context" });
+  }
+});
+
+app.post("/dashboard/api/eod/no-show", requireDashboardAuth, async (req, res) => {
+  try {
+    await ensureOpsTables();
+    const inviteeUri = typeof req.body?.calendly_invitee_uri === "string" ? req.body.calendly_invitee_uri.trim() : "";
+    const eventUri = typeof req.body?.calendly_event_uri === "string" ? req.body.calendly_event_uri.trim() : "";
+    const clientName = typeof req.body?.client_name === "string" ? req.body.client_name.trim() : "";
+    const callTitle = typeof req.body?.call_title === "string" ? req.body.call_title.trim() : "";
+    const callStartTime = typeof req.body?.call_start_time === "string" ? req.body.call_start_time : "";
+
+    if (!inviteeUri) return res.status(400).json({ error: "Calendly invitee reference is required" });
+    if (!callStartTime || Number.isNaN(Date.parse(callStartTime))) return res.status(400).json({ error: "Valid call start time is required" });
+
+    const override = await pool!.query(
+      `INSERT INTO dashboard_call_overrides
+       (calendly_invitee_uri,calendly_event_uri,client_name,call_title,call_start_time,status,note)
+       VALUES ($1,$2,$3,$4,$5,'NO_SHOW','Marked by Dave from EOD review')
+       ON CONFLICT (calendly_invitee_uri)
+       DO UPDATE SET status='NO_SHOW',note='Marked by Dave from EOD review',updated_at=NOW()
+       RETURNING *`,
+      [inviteeUri, eventUri || null, clientName || null, callTitle || null, callStartTime]
+    );
+
+    const action = await pool!.query(
+      `INSERT INTO dashboard_actions (action_type,payload,status,requested_by)
+       VALUES ('MARK_CALENDLY_NO_SHOW',$1::jsonb,'PENDING','Dave') RETURNING *`,
+      [JSON.stringify({
+        client_name: clientName || null,
+        title: callTitle || null,
+        calendly_invitee_uri: inviteeUri,
+        calendly_event_uri: eventUri || null,
+        source: "EOD_REVIEW"
+      })]
+    );
+
+    await logActivity({
+      eventType: "eod_no_show_marked",
+      title: "No-show marked from EOD review",
+      detail: callTitle || null,
+      clientName: clientName || null,
+      entityType: "dashboard_call_override",
+      entityId: override.rows[0].id,
+      actor: "Dave"
+    });
+
+    res.json({ override: override.rows[0], action: action.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to mark no-show" });
   }
 });
 
