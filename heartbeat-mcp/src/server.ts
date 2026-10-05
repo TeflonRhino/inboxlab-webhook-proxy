@@ -14,7 +14,18 @@ if (!HEARTBEAT_API_KEY) throw new Error("HEARTBEAT_API_KEY is required");
 if (!MCP_PATH_TOKEN || MCP_PATH_TOKEN.length < 24) throw new Error("MCP_PATH_TOKEN is required and should be at least 24 characters");
 
 type HeartbeatChannel = { id: string; name: string; type?: string; emoji?: string; [k: string]: unknown };
-type HeartbeatMessage = { id?: string; [k: string]: unknown };
+type HeartbeatMessage = {
+  id?: string;
+  userID?: string;
+  createdAt?: string;
+  content?: string;
+  images?: string[];
+  files?: string[];
+  [k: string]: unknown;
+};
+type HeartbeatUser = { id?: string; name?: string; fullName?: string; firstName?: string; lastName?: string; email?: string; [k: string]: unknown };
+
+let userCache: { at: number; byId: Map<string, string> } | null = null;
 
 async function heartbeat<T = unknown>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
   const url = new URL(`${HEARTBEAT_BASE_URL}${path}`);
@@ -37,6 +48,84 @@ async function heartbeat<T = unknown>(path: string, params?: Record<string, stri
 
 function normalise(s: string): string {
   return s.trim().toLocaleLowerCase("en-GB").replace(/\s+/g, " ");
+}
+
+function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/&#x2F;/gi, "/");
+}
+
+function cleanHeartbeatHtml(html: string): string {
+  if (!html) return "";
+  return decodeHtmlEntities(
+    html
+      .replace(/<br\s*\/?\s*>/gi, "\n")
+      .replace(/<\/p>/gi, "\n")
+      .replace(/<\/li>/gi, "\n")
+      .replace(/<li[^>]*>/gi, "• ")
+      .replace(/<[^>]+>/g, "")
+  )
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/^[ \t]+|[ \t]+$/gm, "")
+    .trim();
+}
+
+function attachmentName(url: string): string {
+  try {
+    const pathname = new URL(url).pathname;
+    return decodeURIComponent(pathname.split("/").pop() || "attachment");
+  } catch {
+    return "attachment";
+  }
+}
+
+async function getUserNames(): Promise<Map<string, string>> {
+  const now = Date.now();
+  if (userCache && now - userCache.at < 5 * 60 * 1000) return userCache.byId;
+
+  const body = await heartbeat<unknown>("/users");
+  const users = Array.isArray(body)
+    ? body
+    : Array.isArray((body as { users?: unknown[] })?.users)
+      ? (body as { users: unknown[] }).users
+      : [];
+
+  const byId = new Map<string, string>();
+  for (const raw of users as HeartbeatUser[]) {
+    if (!raw?.id) continue;
+    const composed = [raw.firstName, raw.lastName].filter(Boolean).join(" ").trim();
+    const display = raw.name || raw.fullName || composed || raw.email || raw.id;
+    byId.set(raw.id, String(display));
+  }
+  userCache = { at: now, byId };
+  return byId;
+}
+
+async function compactMessages(messages: HeartbeatMessage[]) {
+  const names = await getUserNames();
+  return messages.map((m) => {
+    const files = Array.isArray(m.files) ? m.files : [];
+    const images = Array.isArray(m.images) ? m.images : [];
+    return {
+      id: m.id,
+      timestamp: m.createdAt,
+      sender: m.userID ? (names.get(m.userID) || m.userID) : "Unknown",
+      text: cleanHeartbeatHtml(String(m.content || "")),
+      attachments: [
+        ...files.map((u) => ({ type: "file", name: attachmentName(u) })),
+        ...images.map((u) => ({ type: "image", name: attachmentName(u) }))
+      ]
+    };
+  });
 }
 
 async function listChannels(): Promise<HeartbeatChannel[]> {
@@ -77,7 +166,7 @@ function textResult(value: unknown) {
 }
 
 function buildServer() {
-  const server = new McpServer({ name: "heartbeat-client-success", version: "0.1.0" }, { capabilities: { tools: {} } });
+  const server = new McpServer({ name: "heartbeat-client-success", version: "0.2.0" }, { capabilities: { tools: {} } });
 
   server.registerTool("list_heartbeat_channels", {
     description: "List Heartbeat channels. Read-only.",
@@ -94,7 +183,7 @@ function buildServer() {
   }, async ({ name }) => textResult({ query: name, matches: await findChatChannels(name) }));
 
   server.registerTool("get_chat_messages", {
-    description: "Read Heartbeat CHAT channel history by channel ID. Read-only.",
+    description: "Read a compact Heartbeat CHAT timeline by channel ID. Returns sender names, timestamps, cleaned text and compact attachment metadata. Read-only.",
     inputSchema: z.object({
       channel_id: z.string().uuid(),
       max_messages: z.number().int().min(1).max(2000).default(500)
@@ -103,11 +192,12 @@ function buildServer() {
     securitySchemes: [{ type: "noauth" }]
   }, async ({ channel_id, max_messages }) => {
     const messages = await getChatHistory(channel_id, max_messages);
-    return textResult({ channel_id, count: messages.length, messages });
+    const compact = await compactMessages(messages);
+    return textResult({ channel_id, count: compact.length, messages: compact });
   });
 
   server.registerTool("get_client_context", {
-    description: "Find a client's named Heartbeat CHAT channel and return its message history in one call. Read-only.",
+    description: "Find a client's named Heartbeat CHAT channel and return a compact, analysis-ready timeline with sender names, timestamps, cleaned text and attachment metadata. Read-only.",
     inputSchema: z.object({
       name: z.string().min(1),
       max_messages: z.number().int().min(1).max(2000).default(500)
@@ -120,7 +210,18 @@ function buildServer() {
     if (matches.length > 1) return textResult({ name, found: false, ambiguous: true, matches });
     const channel = matches[0];
     const messages = await getChatHistory(channel.id, max_messages);
-    return textResult({ name, found: true, channel, count: messages.length, messages });
+    const compact = await compactMessages(messages);
+    const latest = compact[0]?.timestamp || null;
+    const oldest = compact[compact.length - 1]?.timestamp || null;
+    return textResult({
+      name,
+      found: true,
+      channel: { id: channel.id, name: channel.name, type: channel.type },
+      count: compact.length,
+      latest_message_at: latest,
+      oldest_message_at: oldest,
+      messages: compact
+    });
   });
 
   return server;
@@ -128,7 +229,7 @@ function buildServer() {
 
 const mcpHandler = createMcpHandler(buildServer);
 const app = createMcpExpressApp({ host: "0.0.0.0" });
-app.get("/health", (_req, res) => res.json({ ok: true, service: "heartbeat-client-success-mcp", version: "0.1.0" }));
+app.get("/health", (_req, res) => res.json({ ok: true, service: "heartbeat-client-success-mcp", version: "0.2.0" }));
 const nodeHandler = toNodeHandler(mcpHandler);
 app.all(`/mcp/${MCP_PATH_TOKEN}`, (req, res) => void nodeHandler(req, res, req.body));
 app.listen(PORT, "0.0.0.0", () => console.log(`Heartbeat MCP listening on ${PORT}`));
