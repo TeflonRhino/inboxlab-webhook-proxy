@@ -161,7 +161,11 @@ async function createDashboardItem(input: {
 }
 
 async function sendHeartbeatMessage(channelID: string, text: string) {
+  const message = text.trim();
+  if (!message) throw new Error("Heartbeat message cannot be empty");
   const url = `${HEARTBEAT_BASE_URL}/chatChannel/${encodeURIComponent(channelID)}/message`;
+  const payload: Record<string, string> = { text: message, content: message };
+  if (HEARTBEAT_FROM_USER_ID) payload.from = HEARTBEAT_FROM_USER_ID;
   const response = await fetch(url, {
     method: "PUT",
     headers: {
@@ -169,7 +173,7 @@ async function sendHeartbeatMessage(channelID: string, text: string) {
       Accept: "application/json",
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ text, from: HEARTBEAT_FROM_USER_ID }),
+    body: JSON.stringify(payload),
     signal: AbortSignal.timeout(20000)
   });
   if (!response.ok) {
