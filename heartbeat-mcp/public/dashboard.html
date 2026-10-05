@@ -53,6 +53,7 @@
     <button data-view="onboarding"><span>👋</span>Onboarding</button>
     <button data-view="calls"><span>◷</span>Calls</button>
     <button data-view="followups"><span>✓</span>Follow-ups</button>
+    <button data-view="eod"><span>▣</span>EOD Report</button>
     <button data-view="activity"><span>≡</span>Activity</button>
   </nav>
   <div class="spacer"></div>
@@ -101,6 +102,17 @@
 <section id="view-onboarding" class="hidden"><div class="section-head"><h2>Onboarding welcome workflow</h2><span class="pill">Calendar-triggered</span></div><div class="stack" id="onboardingList"></div></section>
 <section id="view-calls" class="hidden"><div class="section-head"><h2>Calls</h2><span class="pill">Surfaced by ChatGPT</span></div><div class="stack" id="callList"></div></section>
 <section id="view-followups" class="hidden"><div class="section-head"><h2>Follow-ups</h2><span class="pill">Open</span></div><div class="stack" id="followupList"></div></section>
+<section id="view-eod" class="hidden">
+  <div class="section-head"><h2>End of day report</h2><span class="pill">Review before sending</span></div>
+  <div class="workspace">
+    <div class="panel">
+      <div class="actions"><button class="btn primary" id="generateEod">Generate EOD Report</button><button class="btn" id="refreshEod">Regenerate</button></div>
+      <textarea class="draft" id="eodDraft" style="min-height:360px" placeholder="Generate the report, then edit or add anything you want before sending."></textarea>
+      <div class="actions"><button class="btn primary" id="sendEod">Approve &amp; Send to #3-csm-eod-reports</button></div>
+    </div>
+    <div class="panel"><div class="section-head"><h2>Before you send</h2></div><div id="eodChecks" class="stack"></div></div>
+  </div>
+</section>
 <section id="view-activity" class="hidden"><div class="section-head"><h2>Activity Log</h2><span class="pill">Audit trail</span></div><div class="panel"><div class="activity" id="activityList"></div></div></section>
 </main>
 </div>
@@ -118,6 +130,7 @@
     onboarding:["Onboarding","Welcome drafts and reminders for newly booked onboarding calls."],
     calls:["Calls","Useful call prep and upcoming conversations."],
     followups:["Follow-ups","Promises and proactive touches you should not have to remember."],
+    eod:["EOD Report","Generate, edit, approve and send your normal report to Slack."],
     activity:["Activity","A simple audit trail of what you and I changed."]
   };
   function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]})}
@@ -140,8 +153,10 @@
       (x.reason?'<div class="reason">Why: '+esc(x.reason)+'</div>':'')+warning+actions+'</article>';
   }
   function itemCard(x,showCategory){
+    var isNoShow=x.category==="CALL"&&x.metadata&&x.metadata.possible_no_show;
     return '<article class="item-card" data-item="'+x.id+'"><div class="itop"><div><div class="item-title">'+esc(x.title)+'</div><div class="meta">'+(x.client_name?esc(x.client_name)+' · ':'')+(showCategory?esc(labelCategory(x.category))+' · ':'')+esc(x.source||"ChatGPT")+'</div></div><span class="priority '+esc(x.priority)+'">'+esc(x.priority)+'</span></div>'+
       (x.summary?'<div class="item-summary">'+esc(x.summary)+'</div>':'')+
+      (isNoShow?'<div class="actions"><button class="btn red" data-noshow="'+x.id+'">Mark as No Show in Calendly</button></div>':'')+
       '<div class="item-foot"><span>'+(x.due_at?'Due '+fmt(x.due_at):'Updated '+fmt(x.updated_at))+'</span><div><button class="btn" data-iresolve="DONE" data-id="'+x.id+'">Done</button> <button class="btn" data-iresolve="DISMISSED" data-id="'+x.id+'">Dismiss</button></div></div></article>';
   }
   function labelCategory(c){return({CLIENT_ATTENTION:"Client attention",COLLECTION:"Collection",REFUND:"Refund",CALL:"Call",FOLLOW_UP:"Follow-up",ONBOARDING:"Onboarding"})[c]||c}
@@ -199,13 +214,54 @@
     renderList("CALL","callList","No call prep yet","Upcoming calls and useful prep will appear here when surfaced.");
     renderList("FOLLOW_UP","followupList","No follow-ups","Anything you should not have to remember will appear here.");
   }
-  function filterQueue(){var f=document.getElementById("queueFilter").value;var q=f?data.queue.filter(function(x){return x.status===f}):data.queue;document.getElementById("holdQueue").innerHTML=q.length?q.map(function(x){return qCard(x,false)}).join(""):empty("Nothing here","This queue is clear.");}
+
+  function generateEod(){
+    var now=new Date();
+    var todayKey=now.toISOString().slice(0,10);
+    var todaysActivity=data.activity.filter(function(x){return String(x.created_at||"").slice(0,10)===todayKey});
+    var calls=data.items.filter(function(x){return x.category==="CALL"});
+    var onboarding=calls.filter(function(x){return /onboard/i.test((x.title||"")+" "+(x.summary||""))});
+    var setup=calls.filter(function(x){return /setup/i.test((x.title||"")+" "+(x.summary||""))});
+    var launch=calls.filter(function(x){return /launch/i.test((x.title||"")+" "+(x.summary||""))&&!/post/i.test((x.title||"")+" "+(x.summary||""))});
+    var post=calls.filter(function(x){return /post.?launch|support/i.test((x.title||"")+" "+(x.summary||""))});
+    var important=data.items.filter(function(x){return ["REFUND","COLLECTION","CLIENT_ATTENTION","FOLLOW_UP"].includes(x.category)&&["URGENT","HIGH"].includes(x.priority)}).slice(0,8);
+    var lines=[];
+    lines.push("*End of day report: "+new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",year:"numeric"}).format(now)+"*");
+    lines.push("");
+    lines.push("*Total Calls Booked:* "+calls.length);
+    lines.push("*Total Calls Taken:* "+calls.filter(function(x){return !(x.metadata&&x.metadata.possible_no_show)}).length);
+    lines.push("*Onboarding Calls:* "+onboarding.length);
+    lines.push("*Setup Calls:* "+setup.length);
+    lines.push("*Launch Calls:* "+launch.length);
+    lines.push("*Post-Launch / Support Calls:* "+post.length);
+    lines.push("");
+    lines.push("*Insights*");
+    if(important.length) important.forEach(function(x){lines.push("• "+(x.client_name?x.client_name+": ":"")+x.title+(x.summary?" — "+x.summary:""));});
+    else if(todaysActivity.length) todaysActivity.slice(0,8).forEach(function(x){lines.push("• "+x.title+(x.client_name?" — "+x.client_name:""));});
+    else lines.push("• No major exceptions surfaced today.");
+    document.getElementById("eodDraft").value=lines.join("\n");
+    var missing=calls.filter(function(x){return x.metadata&&x.metadata.possible_no_show}).length;
+    var checks=[];
+    checks.push('<div class="item-card"><div class="item-title">'+calls.length+' call card(s) currently surfaced</div><div class="item-summary">Cross-check against Calendly/Fathom before sending if today was especially busy.</div></div>');
+    if(missing)checks.push('<div class="item-card"><div class="item-title">'+missing+' possible no-show(s)</div><div class="item-summary">Review these before finalising total calls taken.</div></div>');
+    checks.push('<div class="item-card"><div class="item-title">Editable before send</div><div class="item-summary">Add context, wins or anything Jimmy should know before approving.</div></div>');
+    document.getElementById("eodChecks").innerHTML=checks.join("");
+  }
+    function filterQueue(){var f=document.getElementById("queueFilter").value;var q=f?data.queue.filter(function(x){return x.status===f}):data.queue;document.getElementById("holdQueue").innerHTML=q.length?q.map(function(x){return qCard(x,false)}).join(""):empty("Nothing here","This queue is clear.");}
   async function load(){try{data=await api("/dashboard/api/overview");render()}catch(e){toast(e.message)}}
   function switchView(view){current=view;document.querySelectorAll("#nav button").forEach(function(b){b.classList.toggle("active",b.dataset.view===view)});document.querySelectorAll("main section[id^='view-']").forEach(function(s){s.classList.toggle("hidden",s.id!=="view-"+view)});document.getElementById("viewTitle").textContent=titles[view][0];document.getElementById("viewSub").textContent=titles[view][1];}
   document.getElementById("nav").addEventListener("click",function(e){var b=e.target.closest("button[data-view]");if(b)switchView(b.dataset.view)});
   document.body.addEventListener("click",function(e){var j=e.target.closest("[data-jump]");if(j)switchView(j.dataset.jump)});
   document.getElementById("refresh").addEventListener("click",load);
   document.getElementById("queueFilter").addEventListener("change",filterQueue);
+  document.getElementById("generateEod").addEventListener("click",generateEod);
+  document.getElementById("refreshEod").addEventListener("click",generateEod);
+  document.getElementById("sendEod").addEventListener("click",async function(){
+    var message=document.getElementById("eodDraft").value.trim();
+    if(!message){toast("Generate or write the report first");return}
+    if(!confirm("Send this exact EOD report to #3-csm-eod-reports now?"))return;
+    try{this.disabled=true;await api("/dashboard/api/eod/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:message})});toast("EOD report sent to Slack");await load()}catch(e){toast(e.message)}finally{this.disabled=false}
+  });
   document.getElementById("holdQueue").addEventListener("click",async function(e){
     var b=e.target.closest("[data-qaction]");if(!b)return;var id=Number(b.dataset.id),act=b.dataset.qaction,card=document.querySelector('[data-qcard="'+id+'"]');
     try{
@@ -225,6 +281,12 @@
     }catch(err){toast(err.message);b.disabled=false}
   });
   document.body.addEventListener("click",async function(e){
+    var n=e.target.closest("[data-noshow]");
+    if(n){
+      if(!confirm("Mark this client as a no-show in Calendly? Your existing Calendly no-show workflow may send its reschedule email."))return;
+      try{n.disabled=true;await api("/dashboard/api/items/"+n.dataset.noshow+"/no-show",{method:"POST"});toast("Marked as no-show in Calendly");await load()}catch(err){toast(err.message);n.disabled=false}
+      return;
+    }
     var b=e.target.closest("[data-iresolve]");if(!b)return;
     try{b.disabled=true;await api("/dashboard/api/items/"+b.dataset.id+"/resolve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:b.dataset.iresolve})});toast(b.dataset.iresolve==="DONE"?"Marked done":"Dismissed");await load()}catch(err){toast(err.message);b.disabled=false}
   });
