@@ -802,6 +802,53 @@ app.post("/dashboard/api/items/:id/resolve", requireDashboardAuth, async (req, r
   }
 });
 
+
+app.get("/dashboard/api/messages/search", requireDashboardAuth, async (req, res) => {
+  try {
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    if (!q) return res.json({ matches: [] });
+    const matches = await findChatChannels(q);
+    res.json({ matches: matches.slice(0, 20).map(ch => ({ id: ch.id, name: ch.name, type: ch.type })) });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to search Heartbeat chats" });
+  }
+});
+
+app.get("/dashboard/api/messages/:channelId/context", requireDashboardAuth, async (req, res) => {
+  try {
+    const channelId = String(req.params.channelId || "");
+    const max = Math.max(1, Math.min(100, Number(req.query.limit) || 30));
+    const messages = await getChatHistory(channelId, max);
+    const compact = await compactMessages(messages);
+    res.json({ channel_id: channelId, messages: compact });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to load Heartbeat context" });
+  }
+});
+
+app.post("/dashboard/api/messages/:channelId/send", requireDashboardAuth, async (req, res) => {
+  try {
+    const channelId = String(req.params.channelId || "");
+    const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    const clientName = typeof req.body?.client_name === "string" ? req.body.client_name.trim() : "";
+    if (!message) return res.status(400).json({ error: "Message cannot be empty" });
+    if (!channelId) return res.status(400).json({ error: "Heartbeat chat is required" });
+    await sendHeartbeatMessage(channelId, message);
+    await logActivity({
+      eventType: "heartbeat_manual_message_sent",
+      title: "Heartbeat message sent from Command Centre",
+      detail: message,
+      clientName: clientName || null,
+      entityType: "heartbeat_channel",
+      entityId: channelId,
+      actor: "Dave"
+    });
+    res.json({ sent: true });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to send Heartbeat message" });
+  }
+});
+
 app.get("/dashboard/api/hold-queue", requireDashboardAuth, async (req, res) => {
   try {
     const status = typeof req.query.status === "string" && req.query.status ? req.query.status : undefined;
