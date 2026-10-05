@@ -52,6 +52,96 @@ async function ensureQueueTable() {
   `);
 }
 
+async function ensureOpsTables() {
+  if (!pool) throw new Error("DATABASE_URL is not configured");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dashboard_activity (
+      id BIGSERIAL PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      detail TEXT,
+      client_name TEXT,
+      entity_type TEXT,
+      entity_id TEXT,
+      actor TEXT NOT NULL DEFAULT 'system',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS dashboard_items (
+      id BIGSERIAL PRIMARY KEY,
+      category TEXT NOT NULL,
+      client_name TEXT,
+      title TEXT NOT NULL,
+      summary TEXT,
+      priority TEXT NOT NULL DEFAULT 'NORMAL',
+      status TEXT NOT NULL DEFAULT 'OPEN',
+      source TEXT NOT NULL DEFAULT 'ChatGPT',
+      due_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS dashboard_items_category_status_idx ON dashboard_items(category,status);
+  `);
+}
+
+async function logActivity(input: {
+  eventType: string;
+  title: string;
+  detail?: string | null;
+  clientName?: string | null;
+  entityType?: string | null;
+  entityId?: string | number | null;
+  actor?: string;
+}) {
+  await ensureOpsTables();
+  await pool!.query(
+    `INSERT INTO dashboard_activity (event_type,title,detail,client_name,entity_type,entity_id,actor)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [input.eventType, input.title, input.detail || null, input.clientName || null, input.entityType || null, input.entityId == null ? null : String(input.entityId), input.actor || "system"]
+  );
+}
+
+async function listActivity(limit = 60) {
+  await ensureOpsTables();
+  const result = await pool!.query(
+    `SELECT * FROM dashboard_activity ORDER BY created_at DESC LIMIT $1`,
+    [Math.max(1, Math.min(200, limit))]
+  );
+  return result.rows;
+}
+
+async function listDashboardItems(category?: string, status = "OPEN") {
+  await ensureOpsTables();
+  const values: unknown[] = [];
+  const where: string[] = [];
+  if (category) { values.push(category); where.push(`category=${values.length}`); }
+  if (status) { values.push(status); where.push(`status=${values.length}`); }
+  const sql = `SELECT * FROM dashboard_items ${where.length ? "WHERE " + where.join(" AND ") : ""}
+               ORDER BY CASE priority WHEN 'URGENT' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'NORMAL' THEN 3 ELSE 4 END,
+                        COALESCE(due_at, '2999-12-31'::timestamptz), updated_at DESC
+               LIMIT 200`;
+  return (await pool!.query(sql, values)).rows;
+}
+
+async function createDashboardItem(input: {
+  category: string;
+  clientName?: string;
+  title: string;
+  summary?: string;
+  priority?: string;
+  source?: string;
+  dueAt?: string;
+}) {
+  await ensureOpsTables();
+  const result = await pool!.query(
+    `INSERT INTO dashboard_items (category,client_name,title,summary,priority,source,due_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [input.category, input.clientName || null, input.title, input.summary || null, input.priority || "NORMAL", input.source || "ChatGPT", input.dueAt || null]
+  );
+  const item = result.rows[0];
+  await logActivity({ eventType: "dashboard_item_created", title: `${item.category}: ${item.title}`, detail: item.summary, clientName: item.client_name, entityType: "dashboard_item", entityId: item.id, actor: "ChatGPT" });
+  return item;
+}
+
 async function sendHeartbeatMessage(channelID: string, text: string) {
   const url = `${HEARTBEAT_BASE_URL}/chatChannel/${encodeURIComponent(channelID)}/message`;
   const response = await fetch(url, {
@@ -82,7 +172,9 @@ async function queueReply(clientName: string, draft: string, reason?: string) {
      RETURNING *`,
     [channel.name, channel.id, draft, reason || null]
   );
-  return result.rows[0];
+  const item = result.rows[0];
+  await logActivity({ eventType: "hold_created", title: "Heartbeat draft added to Hold Queue", detail: draft, clientName: channel.name, entityType: "hold_queue", entityId: item.id, actor: "ChatGPT" });
+  return item;
 }
 
 async function listQueue(status?: string) {
@@ -376,6 +468,54 @@ function buildServer() {
     return textResult({ skipped: true, item: result.rows[0] });
   });
 
+  server.registerTool("list_dashboard_items", {
+    description: "List visual InboxLab dashboard items surfaced by ChatGPT, such as client attention, collections, refunds, calls and follow-ups. Read-only.",
+    inputSchema: z.object({
+      category: z.enum(["CLIENT_ATTENTION","COLLECTION","REFUND","CALL","FOLLOW_UP"]).optional(),
+      status: z.enum(["OPEN","DONE","DISMISSED"]).default("OPEN")
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    securitySchemes: [{ type: "noauth" }]
+  }, async ({ category, status }) => textResult({ items: await listDashboardItems(category, status) }));
+
+  server.registerTool("add_dashboard_item", {
+    description: "Add one concise item to the visual InboxLab Command Centre after ChatGPT finds something worth surfacing from connected work systems.",
+    inputSchema: z.object({
+      category: z.enum(["CLIENT_ATTENTION","COLLECTION","REFUND","CALL","FOLLOW_UP"]),
+      client_name: z.string().optional(),
+      title: z.string().min(1),
+      summary: z.string().optional(),
+      priority: z.enum(["URGENT","HIGH","NORMAL","LOW"]).default("NORMAL"),
+      source: z.string().default("ChatGPT"),
+      due_at: z.string().optional()
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    securitySchemes: [{ type: "noauth" }]
+  }, async ({ category, client_name, title, summary, priority, source, due_at }) => {
+    const item = await createDashboardItem({ category, clientName: client_name, title, summary, priority, source, dueAt: due_at });
+    return textResult({ created: true, item });
+  });
+
+  server.registerTool("resolve_dashboard_item", {
+    description: "Mark a visual InboxLab dashboard item as DONE or DISMISSED.",
+    inputSchema: z.object({
+      id: z.number().int().positive(),
+      status: z.enum(["DONE","DISMISSED"]).default("DONE")
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    securitySchemes: [{ type: "noauth" }]
+  }, async ({ id, status }) => {
+    await ensureOpsTables();
+    const result = await pool!.query(
+      `UPDATE dashboard_items SET status=$2, updated_at=NOW() WHERE id=$1 AND status='OPEN' RETURNING *`,
+      [id, status]
+    );
+    if (!result.rowCount) throw new Error("Dashboard item must exist and be OPEN");
+    const item = result.rows[0];
+    await logActivity({ eventType: "dashboard_item_resolved", title: `${status}: ${item.title}`, detail: item.summary, clientName: item.client_name, entityType: "dashboard_item", entityId: item.id, actor: "ChatGPT" });
+    return textResult({ updated: true, item });
+  });
+
   server.registerTool("post_approved_reply", {
     description: "Post the exact draft from an APPROVED queue item to Heartbeat, then mark it POSTED. Refuses HOLD drafts.",
     inputSchema: z.object({ id: z.number().int().positive() }),
@@ -459,6 +599,30 @@ app.get("/dashboard", requireDashboardAuth, (_req, res) => {
   res.sendFile("dashboard.html", { root: process.cwd() + "/public" });
 });
 
+app.get("/dashboard/api/overview", requireDashboardAuth, async (_req, res) => {
+  try {
+    const [queue, items, activity] = await Promise.all([listQueue(), listDashboardItems(undefined, "OPEN"), listActivity(80)]);
+    res.json({ queue, items, activity });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to load dashboard" });
+  }
+});
+
+app.post("/dashboard/api/items/:id/resolve", requireDashboardAuth, async (req, res) => {
+  try {
+    await ensureOpsTables();
+    const id = Number(req.params.id);
+    const status = req.body?.status === "DISMISSED" ? "DISMISSED" : "DONE";
+    const result = await pool!.query(`UPDATE dashboard_items SET status=$2, updated_at=NOW() WHERE id=$1 AND status='OPEN' RETURNING *`, [id, status]);
+    if (!result.rowCount) return res.status(409).json({ error: "Item must be OPEN" });
+    const item = result.rows[0];
+    await logActivity({ eventType: "dashboard_item_resolved", title: `${status}: ${item.title}`, detail: item.summary, clientName: item.client_name, entityType: "dashboard_item", entityId: item.id, actor: "Dave" });
+    res.json({ item });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to update item" });
+  }
+});
+
 app.get("/dashboard/api/hold-queue", requireDashboardAuth, async (req, res) => {
   try {
     const status = typeof req.query.status === "string" && req.query.status ? req.query.status : undefined;
@@ -482,7 +646,9 @@ app.patch("/dashboard/api/hold-queue/:id", requireDashboardAuth, async (req, res
       `UPDATE heartbeat_hold_queue SET draft=$2, reason=$3, status='HOLD', approved_at=NULL, updated_at=NOW() WHERE id=$1 RETURNING *`,
       [id, draft, reason || null]
     );
-    res.json({ item: result.rows[0] });
+    const item = result.rows[0];
+    await logActivity({ eventType: "hold_edited", title: "Hold draft edited", detail: item.draft, clientName: item.client_name, entityType: "hold_queue", entityId: item.id, actor: "Dave" });
+    res.json({ item });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to update queue item" });
   }
@@ -497,7 +663,9 @@ app.post("/dashboard/api/hold-queue/:id/approve", requireDashboardAuth, async (r
       [id]
     );
     if (!result.rowCount) return res.status(409).json({ error: "Item must be in HOLD status" });
-    res.json({ item: result.rows[0] });
+    const item = result.rows[0];
+    await logActivity({ eventType: "hold_approved", title: "Heartbeat draft approved", detail: item.draft, clientName: item.client_name, entityType: "hold_queue", entityId: item.id, actor: "Dave" });
+    res.json({ item });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to approve queue item" });
   }
@@ -512,7 +680,9 @@ app.post("/dashboard/api/hold-queue/:id/skip", requireDashboardAuth, async (req,
       [id]
     );
     if (!result.rowCount) return res.status(409).json({ error: "Item must be HOLD or APPROVED" });
-    res.json({ item: result.rows[0] });
+    const item = result.rows[0];
+    await logActivity({ eventType: "hold_skipped", title: "Heartbeat draft skipped", detail: item.draft, clientName: item.client_name, entityType: "hold_queue", entityId: item.id, actor: "Dave" });
+    res.json({ item });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to skip queue item" });
   }
@@ -530,7 +700,9 @@ app.post("/dashboard/api/hold-queue/:id/post", requireDashboardAuth, async (req,
       `UPDATE heartbeat_hold_queue SET status='POSTED', posted_at=NOW(), updated_at=NOW() WHERE id=$1 RETURNING *`,
       [id]
     );
-    res.json({ item: result.rows[0] });
+    const posted = result.rows[0];
+    await logActivity({ eventType: "hold_posted", title: "Heartbeat reply posted", detail: posted.draft, clientName: posted.client_name, entityType: "hold_queue", entityId: posted.id, actor: "Dave" });
+    res.json({ item: posted });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to post reply" });
   }
@@ -539,8 +711,8 @@ app.get("/health", (_req, res) => res.json({ ok: true, service: "heartbeat-clien
 const nodeHandler = toNodeHandler(mcpHandler);
 app.all(`/mcp/${MCP_PATH_TOKEN}`, (req, res) => void nodeHandler(req, res, req.body));
 if (pool) {
-  ensureQueueTable()
-    .then(() => console.log("Heartbeat hold queue ready"))
-    .catch((err) => console.error("Heartbeat hold queue init failed", err));
+  Promise.all([ensureQueueTable(), ensureOpsTables()])
+    .then(() => console.log("Heartbeat hold queue and dashboard ops store ready"))
+    .catch((err) => console.error("Heartbeat data init failed", err));
 }
 app.listen(PORT, "0.0.0.0", () => console.log(`Heartbeat MCP listening on ${PORT}`));
