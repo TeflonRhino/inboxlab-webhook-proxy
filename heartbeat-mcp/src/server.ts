@@ -12,6 +12,9 @@ const MCP_PATH_TOKEN = process.env.MCP_PATH_TOKEN;
 const PORT = Number(process.env.PORT || 3000);
 const DATABASE_URL = process.env.DATABASE_URL;
 const HEARTBEAT_FROM_USER_ID = process.env.HEARTBEAT_FROM_USER_ID || "d8a956be-e3e4-4ef1-9978-6f1b448d3cba";
+const DASHBOARD_USER = process.env.DASHBOARD_USER || "dave";
+const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD;
+const DASHBOARD_SESSION_TOKEN = process.env.DASHBOARD_SESSION_TOKEN;
 const pool = DATABASE_URL ? new pg.Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } }) : null;
 
 if (!HEARTBEAT_API_KEY) throw new Error("HEARTBEAT_API_KEY is required");
@@ -401,6 +404,137 @@ function buildServer() {
 
 const mcpHandler = createMcpHandler(buildServer);
 const app = createMcpExpressApp({ host: "0.0.0.0" });
+
+function readCookie(req: express.Request, name: string) {
+  const raw = req.headers.cookie || "";
+  for (const part of raw.split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+    if (key === name) return decodeURIComponent(rest.join("="));
+  }
+  return null;
+}
+
+function isDashboardAuthed(req: express.Request) {
+  return Boolean(DASHBOARD_SESSION_TOKEN && readCookie(req, "inboxlab_ops_session") === DASHBOARD_SESSION_TOKEN);
+}
+
+function requireDashboardAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (isDashboardAuthed(req)) return next();
+  if (req.path.startsWith("/api/")) return res.status(401).json({ error: "Not authenticated" });
+  return res.redirect("/dashboard/login");
+}
+
+app.use("/dashboard/api", express.json());
+app.use("/dashboard/login", express.urlencoded({ extended: false }));
+
+app.get("/dashboard/login", (req, res) => {
+  if (isDashboardAuthed(req)) return res.redirect("/dashboard");
+  res.type("html").send(`<!doctype html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>InboxLab Command Centre</title>
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#141414;background:#f5f5f4}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px}
+.card{width:min(420px,100%);background:#fff;border:1px solid #e7e5e4;border-radius:22px;padding:28px;box-shadow:0 18px 60px rgba(0,0,0,.08)}
+.brand{font-weight:800;font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:#57534e}.title{font-size:28px;font-weight:800;margin:10px 0 6px}.muted{color:#78716c;font-size:14px;line-height:1.5;margin-bottom:22px}
+label{font-size:13px;font-weight:700;display:block;margin:14px 0 7px}input{width:100%;font:inherit;padding:13px 14px;border:1px solid #d6d3d1;border-radius:12px;outline:none}input:focus{border-color:#292524;box-shadow:0 0 0 3px rgba(41,37,36,.08)}
+button{margin-top:18px;width:100%;border:0;border-radius:12px;padding:13px 16px;background:#1c1917;color:white;font:inherit;font-weight:750;cursor:pointer}.error{background:#fef2f2;color:#991b1b;padding:10px 12px;border-radius:10px;font-size:13px;margin-bottom:12px}
+</style></head><body><main class="card"><div class="brand">InboxLab</div><div class="title">Command Centre</div><div class="muted">Private visual workspace for Dave + ChatGPT.</div>
+${req.query.error ? '<div class="error">Incorrect username or password.</div>' : ''}
+<form method="post" action="/dashboard/login"><label>Username</label><input name="username" autocomplete="username" required value="dave"><label>Password</label><input type="password" name="password" autocomplete="current-password" required><button type="submit">Open dashboard</button></form></main></body></html>`);
+});
+
+app.post("/dashboard/login", (req, res) => {
+  if (!DASHBOARD_PASSWORD || !DASHBOARD_SESSION_TOKEN) return res.status(503).send("Dashboard authentication is not configured.");
+  if (req.body?.username !== DASHBOARD_USER || req.body?.password !== DASHBOARD_PASSWORD) return res.redirect("/dashboard/login?error=1");
+  res.setHeader("Set-Cookie", `inboxlab_ops_session=${encodeURIComponent(DASHBOARD_SESSION_TOKEN)}; Path=/dashboard; HttpOnly; Secure; SameSite=Lax; Max-Age=604800`);
+  return res.redirect("/dashboard");
+});
+
+app.post("/dashboard/logout", (_req, res) => {
+  res.setHeader("Set-Cookie", "inboxlab_ops_session=; Path=/dashboard; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
+  return res.redirect("/dashboard/login");
+});
+
+app.get("/dashboard", requireDashboardAuth, (_req, res) => {
+  res.sendFile("dashboard.html", { root: process.cwd() + "/public" });
+});
+
+app.get("/dashboard/api/hold-queue", requireDashboardAuth, async (req, res) => {
+  try {
+    const status = typeof req.query.status === "string" && req.query.status ? req.query.status : undefined;
+    const items = await listQueue(status);
+    res.json({ items });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to load queue" });
+  }
+});
+
+app.patch("/dashboard/api/hold-queue/:id", requireDashboardAuth, async (req, res) => {
+  try {
+    await ensureQueueTable();
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid id" });
+    const current = await pool!.query(`SELECT * FROM heartbeat_hold_queue WHERE id=$1`, [id]);
+    if (!current.rowCount) return res.status(404).json({ error: "Queue item not found" });
+    const draft = typeof req.body?.draft === "string" && req.body.draft.trim() ? req.body.draft.trim() : current.rows[0].draft;
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : current.rows[0].reason;
+    const result = await pool!.query(
+      `UPDATE heartbeat_hold_queue SET draft=$2, reason=$3, status='HOLD', approved_at=NULL, updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [id, draft, reason || null]
+    );
+    res.json({ item: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to update queue item" });
+  }
+});
+
+app.post("/dashboard/api/hold-queue/:id/approve", requireDashboardAuth, async (req, res) => {
+  try {
+    await ensureQueueTable();
+    const id = Number(req.params.id);
+    const result = await pool!.query(
+      `UPDATE heartbeat_hold_queue SET status='APPROVED', approved_at=NOW(), updated_at=NOW() WHERE id=$1 AND status='HOLD' RETURNING *`,
+      [id]
+    );
+    if (!result.rowCount) return res.status(409).json({ error: "Item must be in HOLD status" });
+    res.json({ item: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to approve queue item" });
+  }
+});
+
+app.post("/dashboard/api/hold-queue/:id/skip", requireDashboardAuth, async (req, res) => {
+  try {
+    await ensureQueueTable();
+    const id = Number(req.params.id);
+    const result = await pool!.query(
+      `UPDATE heartbeat_hold_queue SET status='SKIPPED', updated_at=NOW() WHERE id=$1 AND status IN ('HOLD','APPROVED') RETURNING *`,
+      [id]
+    );
+    if (!result.rowCount) return res.status(409).json({ error: "Item must be HOLD or APPROVED" });
+    res.json({ item: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to skip queue item" });
+  }
+});
+
+app.post("/dashboard/api/hold-queue/:id/post", requireDashboardAuth, async (req, res) => {
+  try {
+    await ensureQueueTable();
+    const id = Number(req.params.id);
+    const current = await pool!.query(`SELECT * FROM heartbeat_hold_queue WHERE id=$1 AND status='APPROVED'`, [id]);
+    if (!current.rowCount) return res.status(409).json({ error: "Item must be explicitly APPROVED before posting" });
+    const item = current.rows[0];
+    await sendHeartbeatMessage(item.channel_id, item.draft);
+    const result = await pool!.query(
+      `UPDATE heartbeat_hold_queue SET status='POSTED', posted_at=NOW(), updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [id]
+    );
+    res.json({ item: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to post reply" });
+  }
+});
 app.get("/health", (_req, res) => res.json({ ok: true, service: "heartbeat-client-success-mcp", version: "0.3.0" }));
 const nodeHandler = toNodeHandler(mcpHandler);
 app.all(`/mcp/${MCP_PATH_TOKEN}`, (req, res) => void nodeHandler(req, res, req.body));
