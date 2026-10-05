@@ -681,8 +681,10 @@
         if(relatedIndex>=0){
           var existing=work[relatedIndex];
           var en=normaliseEod(existing);
-          if(/no show/.test(en) && label==="follow-up sent with reschedule link" && !/reschedule link/.test(en)){
-            work[relatedIndex]=existing+"; followed up with reschedule link";
+          if(/no show/.test(en) && label==="follow-up sent with reschedule link"){
+            if(!/reschedule link/.test(en)){
+              work[relatedIndex]=existing+"; followed up with reschedule link";
+            }
             return;
           }
           if(/no show/.test(en) && /heartbeat follow up sent|proactive check in sent|call reminder sent/.test(normaliseEod(label))){
