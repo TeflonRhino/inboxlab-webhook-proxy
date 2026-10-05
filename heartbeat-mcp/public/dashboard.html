@@ -395,6 +395,28 @@
         if(/check in|checking in|follow up|following up|how are you getting on|where are you at/.test(t))return "proactive check-in sent";
         return "Heartbeat follow-up sent";
       }
+      function canonicalClientName(name){
+        var n=normaliseEod(name);
+        if(!n)return String(name||"").trim();
+        var candidates=[];
+        eventInvitees.forEach(function(x){
+          var nm=String(x.invitee&&x.invitee.name||"").trim();
+          if(nm)candidates.push(nm);
+        });
+        heartbeat.forEach(function(h){
+          var nm=String(h.client_name||"").trim();
+          if(nm)candidates.push(nm);
+        });
+        for(var i=0;i<candidates.length;i++){
+          var cn=normaliseEod(candidates[i]);
+          if(cn===n)return candidates[i];
+        }
+        for(var j=0;j<candidates.length;j++){
+          var cn2=normaliseEod(candidates[j]);
+          if(cn2 && (cn2.indexOf(n)===0 || n.indexOf(cn2)===0))return candidates[j];
+        }
+        return String(name||"").trim();
+      }
       function addWork(arr,text){
         if(!text||isNoiseText(text))return;
         var key=normaliseEod(text);
@@ -615,13 +637,23 @@
         addWork(work,text);
       });
       bookingStatuses.forEach(function(row){
-        var x=row.x,name=inviteeName(x);
-        var chased=heartbeat.some(function(h){return normaliseEod(h.client_name)===normaliseEod(name)});
-        var marked=noShowActions.some(function(a){return normaliseEod(a.payload&&a.payload.client_name)===normaliseEod(name)});
+        var x=row.x,name=canonicalClientName(inviteeName(x));
+        var chasedMessage=heartbeat.find(function(h){
+          var hn=normaliseEod(h.client_name),nn=normaliseEod(name);
+          return hn===nn || hn.indexOf(nn)===0 || nn.indexOf(hn)===0;
+        });
+        var marked=noShowActions.some(function(a){
+          var an=normaliseEod(a.payload&&a.payload.client_name),nn=normaliseEod(name);
+          return an===nn || an.indexOf(nn)===0 || nn.indexOf(an)===0;
+        });
         if(row.status==="no_show"){
           var msg=name+" — no-show";
           if(marked||x.invitee.no_show||overrideFor(x))msg+="; recorded";
-          if(chased)msg+="; chased in Heartbeat";
+          if(chasedMessage){
+            var label=classifyHeartbeat(chasedMessage.detail||"");
+            if(label==="follow-up sent with reschedule link")msg+="; followed up with reschedule link";
+            else msg+="; followed up in Heartbeat";
+          }
           addWork(work,msg);
         }else if(row.status==="rescheduled"){
           addWork(work,name+" — rescheduled call");
@@ -629,16 +661,28 @@
       });
 
       heartbeat.forEach(function(h){
-        var name=h.client_name||"Client";
+        var name=canonicalClientName(h.client_name||"Client");
         var detail=String(h.detail||"").replace(/\s+/g," ").trim();
         if(!detail||isNoiseText(detail))return;
-        var sameClient=work.some(function(w){return normaliseEod(w).indexOf(normaliseEod(name))===0});
         var label=classifyHeartbeat(detail);
-        if(sameClient){
-          if(!work.some(function(w){return normaliseEod(w).indexOf(normaliseEod(name))===0 && normaliseEod(w).includes(normaliseEod(label))})){
-            addWork(work,name+" — "+label);
+        var nn=normaliseEod(name);
+        var relatedIndex=work.findIndex(function(w){
+          var wn=normaliseEod(w);
+          return wn.indexOf(nn)===0 || nn.indexOf(wn.split(" ")[0])===0;
+        });
+        if(relatedIndex>=0){
+          var existing=work[relatedIndex];
+          var en=normaliseEod(existing);
+          if(/no show/.test(en) && label==="follow-up sent with reschedule link" && !/reschedule link/.test(en)){
+            work[relatedIndex]=existing+"; followed up with reschedule link";
+            return;
           }
-        }else addWork(work,name+" — "+label);
+          if(/no show/.test(en) && /heartbeat follow up sent|proactive check in sent|call reminder sent/.test(normaliseEod(label))){
+            return;
+          }
+          if(en.includes(normaliseEod(label)))return;
+        }
+        addWork(work,name+" — "+label);
       });
 
       items.filter(function(x){
