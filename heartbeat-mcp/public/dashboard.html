@@ -459,7 +459,7 @@
         t=t.replace(/\\([#$%&*_{}<>])/g,"$1");
         t=t.replace(/[#*_>\`~]+/g," ");
         t=t.replace(/\s+/g," ").trim();
-        if(!t)return "";
+        if(!t)return {purpose:"", takeaway:"", raw:""};
 
         var purpose="", takeaway="";
         var purposeMatch=t.match(/Meeting Purpose\s+(.+?)(?=\s+Key Takeaways\b|$)/i);
@@ -474,10 +474,32 @@
           takeaway=(sentence?sentence[1]:k).trim();
         }
 
-        var out=purpose;
-        if(takeaway && normaliseEod(takeaway)!==normaliseEod(purpose))out+=(out?" ":"")+takeaway;
-        if(!out)out=t.replace(/^Meeting Purpose\s*/i,"").replace(/\s+Key Takeaways.*$/i,"").trim();
-        return out.length>220?out.slice(0,217).replace(/[,:;\-\s]+$/,"")+"…":out;
+        return {purpose:purpose, takeaway:takeaway, raw:t};
+      }
+      function outcomeFromMeeting(m){
+        var parsed=cleanSummary(m.summary);
+        var p=String(parsed.purpose||"").replace(/\.$/,"").trim();
+        var k=String(parsed.takeaway||"").replace(/\.$/,"").trim();
+        var hay=normaliseEod((parsed.raw||"")+" "+p+" "+k);
+        var out="";
+
+        if(/refund/.test(hay) && /approved|processed|received|confirmed/.test(hay)){
+          out=k||p;
+        }else if(/blocked|failure|failed|declined|issue|problem|risk/.test(hay)){
+          out=k||p;
+        }else if(/budget|cost|pricing|financial/.test(hay) && /delay|pause|concern|shock|buffer/.test(hay)){
+          out=k||p;
+        }else if(/purchased|ordered|completed|launched|built|set up|setup/.test(hay)){
+          out=k||p;
+        }else if(k){
+          out=k;
+        }else if(p){
+          out=p;
+        }
+
+        if(!out)out="Call completed";
+        out=out.replace(/^(the )?/i,function(x){return x});
+        return out.charAt(0).toUpperCase()+out.slice(1)+(out.endsWith(".")?"":".");
       }
       function calendlyNameForEmail(email){
         if(!email)return "";
@@ -520,10 +542,9 @@
 
       fathomMeetings.forEach(function(m){
         var name=meetingPerson(m);
-        var summary=cleanSummary(m.summary);
+        var outcome=outcomeFromMeeting(m);
         var next=(m.action_items||[]).filter(function(a){return a&&a.description&&!a.completed}).slice(0,2).map(function(a){return cleanAction(a.description)}).filter(Boolean);
-        var text=name+" — call completed";
-        if(summary)text+=": "+summary;
+        var text=name+" — "+outcome;
         if(next.length)text+=" Next: "+next.join("; ");
         addWork(work,text);
       });
