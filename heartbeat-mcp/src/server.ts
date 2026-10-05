@@ -1087,7 +1087,12 @@ app.post("/dashboard/api/eod/send", requireDashboardAuth, async (req, res) => {
     const slackBody: any = await slackResponse.json().catch(() => null);
     if (!slackResponse.ok || !slackBody?.ok) {
       const code = slackBody?.error || `HTTP ${slackResponse.status}`;
-      return res.status(502).json({ error: `Slack send failed: ${code}` });
+      const needed = slackBody?.needed || slackResponse.headers.get("x-accepted-oauth-scopes") || "";
+      const provided = slackBody?.provided || slackResponse.headers.get("x-oauth-scopes") || "";
+      const scopeDetail = code === "missing_scope"
+        ? ` Needed: ${needed || "unknown"}. Token currently has: ${provided || "unknown"}.`
+        : "";
+      return res.status(502).json({ error: `Slack send failed: ${code}.${scopeDetail}` });
     }
 
     await logActivity({
