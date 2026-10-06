@@ -212,6 +212,39 @@ app.get('/', (_req, res) => {
   });
 });
 
+app.get('/zoom/oauth/callback', async (req, res) => {
+  const code = String(req.query?.code || '');
+  const error = String(req.query?.error || '');
+  if (error) {
+    return res.status(400).send('<h2>Talking Point Zoom connection failed</h2><p>' + error + '</p>');
+  }
+  if (!code) {
+    return res.status(400).send('<h2>Talking Point</h2><p>Missing Zoom authorization code.</p>');
+  }
+  if (!ZOOM_CLIENT_ID || !ZOOM_CLIENT_SECRET) {
+    return res.status(503).send('<h2>Talking Point</h2><p>Zoom credentials are not configured on the backend yet.</p>');
+  }
+
+  try {
+    const redirectUri = 'https://talking-point-rtms.onrender.com/zoom/oauth/callback';
+    const basic = Buffer.from(ZOOM_CLIENT_ID + ':' + ZOOM_CLIENT_SECRET).toString('base64');
+    const tokenResponse = await fetch('https://zoom.us/oauth/token?grant_type=authorization_code&code=' + encodeURIComponent(code) + '&redirect_uri=' + encodeURIComponent(redirectUri), {
+      method: 'POST',
+      headers: { Authorization: 'Basic ' + basic }
+    });
+    const token = await tokenResponse.json();
+    if (!tokenResponse.ok) {
+      console.error('[Talking Point] Zoom OAuth token exchange failed', token);
+      return res.status(502).send('<h2>Talking Point Zoom connection failed</h2><p>The authorization code could not be exchanged yet.</p>');
+    }
+    console.log('[Talking Point] Zoom app authorized successfully');
+    return res.send('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:system-ui;padding:40px;max-width:680px;margin:auto"><h1>Talking Point connected ✅</h1><p>Zoom authorization completed successfully. You can close this tab and return to Talking Point.</p></body>');
+  } catch (err) {
+    console.error('[Talking Point] Zoom OAuth error', err);
+    return res.status(500).send('<h2>Talking Point Zoom connection failed</h2><p>Please try again.</p>');
+  }
+});
+
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
