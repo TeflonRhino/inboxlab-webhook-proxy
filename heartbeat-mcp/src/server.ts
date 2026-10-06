@@ -1281,6 +1281,73 @@ app.post("/dashboard/api/eod/send", requireDashboardAuth, async (req, res) => {
 });
 
 
+async function getCollectionContext(item: any) {
+  const name = String(item?.client_name || "").trim();
+  let heartbeat: any = { found: false, messages: [], error: null };
+  try {
+    const matches = await findChatChannels(name);
+    if (matches.length === 1) {
+      const messages = await getChatHistory(matches[0].id, 80);
+      heartbeat = { found: true, channel: { id: matches[0].id, name: matches[0].name }, messages: await compactMessages(messages), error: null };
+    } else if (matches.length > 1) heartbeat = { found: false, ambiguous: true, matches: matches.map(m => ({ id: m.id, name: m.name })), messages: [], error: null };
+  } catch (err) { heartbeat.error = err instanceof Error ? err.message : "Heartbeat lookup failed"; }
+
+  let fathom: any = { available: false, meetings: [], error: null };
+  if (FATHOM_API_KEY) {
+    try {
+      const end = new Date(), start = new Date(end.getTime() - 365*24*60*60*1000);
+      const url = new URL("https://api.fathom.ai/external/v1/meetings");
+      url.searchParams.set("created_after", start.toISOString());
+      url.searchParams.set("created_before", end.toISOString());
+      url.searchParams.set("include_summary", "true");
+      url.searchParams.set("include_action_items", "true");
+      const r = await fetch(url,{headers:{"X-Api-Key":FATHOM_API_KEY,Accept:"application/json"},signal:AbortSignal.timeout(20000)});
+      const body:any = await r.json().catch(()=>null);
+      if(!r.ok) throw new Error("Fathom lookup failed "+r.status);
+      const q=normalise(name);
+      const raw=Array.isArray(body?.items)?body.items:[];
+      const meetings=raw.filter((m:any)=>{
+        const invitees=Array.isArray(m?.calendar_invitees)?m.calendar_invitees:[];
+        return invitees.some((i:any)=>normalise(String(i?.name||""))===q || normalise(String(i?.name||"")).includes(q)) ||
+          normalise(String(m?.title||m?.meeting_title||"")).includes(q);
+      }).slice(0,12).map((m:any)=>({
+        title:m.title||m.meeting_title||"Fathom meeting",
+        created_at:m.created_at||m.recording_start_time||m.scheduled_start_time||null,
+        summary:m.default_summary?.markdown_formatted||m.summary?.markdown_formatted||m.summary||null,
+        action_items:Array.isArray(m.action_items)?m.action_items.map((a:any)=>({description:a?.description||null,completed:Boolean(a?.completed),assignee:a?.assignee?.name||null})):[],
+        url:m.url||m.share_url||null
+      }));
+      fathom={available:true,meetings,error:null};
+    } catch(err){ fathom={available:false,meetings:[],error:err instanceof Error?err.message:"Fathom lookup failed"}; }
+  } else fathom.error="FATHOM_API_KEY is not configured";
+
+  const paymentPattern=/pay|payment|balance|invoice|installment|instalment|card|declin|past due|overdue|owe|outstanding|plan|finance|clarity|charge/i;
+  const planPattern=/agreed|plan|promise|promised|will pay|pay on|payment date|installment|instalment|split|pause|extension|by friday|by monday|next week|next month/i;
+  const relevantHeartbeat=(heartbeat.messages||[]).filter((m:any)=>paymentPattern.test(String(m?.text||""))).slice(0,20);
+  const relevantMeetings=(fathom.meetings||[]).filter((m:any)=>paymentPattern.test(String(m?.summary||"")+" "+JSON.stringify(m?.action_items||[])));
+  const plans=[
+    ...relevantHeartbeat.filter((m:any)=>planPattern.test(String(m?.text||""))).map((m:any)=>({source:"Heartbeat",date:m.timestamp||null,text:m.text})),
+    ...relevantMeetings.flatMap((m:any)=>(m.action_items||[]).filter((a:any)=>planPattern.test(String(a?.description||""))).map((a:any)=>({source:"Fathom",date:m.created_at||null,text:a.description})))
+  ].slice(0,10);
+  return {
+    item:{id:item.id,client_name:item.client_name,title:item.title,summary:item.summary,priority:item.priority,source:item.source,metadata:item.metadata||{}},
+    signals:{payment_discussed:relevantHeartbeat.length>0||relevantMeetings.length>0,plans_found:plans.length>0},
+    plans,
+    heartbeat:{...heartbeat,relevant_messages:relevantHeartbeat},
+    fathom:{...fathom,relevant_meetings:relevantMeetings}
+  };
+}
+
+app.get("/dashboard/api/items/:id/collection-context", requireDashboardAuth, async (req,res)=>{
+  try{
+    await ensureOpsTables();
+    const id=Number(req.params.id);
+    const found=await pool!.query(`SELECT * FROM dashboard_items WHERE id=$1 AND category='COLLECTION'`,[id]);
+    if(!found.rowCount)return res.status(404).json({error:"Collection item not found"});
+    res.json(await getCollectionContext(found.rows[0]));
+  }catch(err){res.status(500).json({error:err instanceof Error?err.message:"Failed to build collection context"});}
+});
+
 app.post("/dashboard/api/items/:id/draft-message", requireDashboardAuth, async (req, res) => {
   try {
     await ensureOpsTables();
@@ -1314,10 +1381,19 @@ app.post("/dashboard/api/items/:id/draft-message", requireDashboardAuth, async (
 
     let compact: Array<{ text?: string }> = [];
     try {
-      const matches = await findChatChannels(String(item.client_name));
-      if (matches.length === 1) {
-        const messages = await getChatHistory(matches[0].id, 30);
-        compact = await compactMessages(messages);
+      if (item.category === "COLLECTION") {
+        const ctx = await getCollectionContext(item);
+        compact = [
+          ...(ctx.heartbeat?.relevant_messages || []).map((m:any)=>({text:m.text})),
+          ...(ctx.fathom?.relevant_meetings || []).map((m:any)=>({text:[m.summary,...(m.action_items||[]).map((a:any)=>a.description)].filter(Boolean).join(" ")})),
+          ...(ctx.plans || []).map((p:any)=>({text:"Agreed plan: "+p.text}))
+        ];
+      } else {
+        const matches = await findChatChannels(String(item.client_name));
+        if (matches.length === 1) {
+          const messages = await getChatHistory(matches[0].id, 30);
+          compact = await compactMessages(messages);
+        }
       }
     } catch {
       // Item summary still provides enough context for a safe starting draft.
