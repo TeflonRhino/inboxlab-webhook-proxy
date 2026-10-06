@@ -898,36 +898,8 @@
         addWork(work,name+" — "+label);
       });
 
-      // Dashboard items are state, not activity. Only include a dashboard item in today's
-      // outcomes when the activity ledger proves that something happened to it today.
-      // This prevents synced refund/collection backlogs from being dumped into the EOD.
-      var changedItemIds=Object.create(null);
-      activity.forEach(function(a){
-        if(a.entity_type==="dashboard_item"&&a.entity_id!=null&&/resolved|created|updated|drafted|completed/i.test(String(a.event_type||""))){
-          changedItemIds[String(a.entity_id)]=true;
-        }
-      });
-      items.filter(function(x){
-        if(!["COLLECTION","REFUND","CLIENT_ATTENTION","FOLLOW_UP"].includes(x.category))return false;
-        if(!changedItemIds[String(x.id)])return false;
-        return !isNoiseText((x.title||"")+" "+(x.summary||""));
-      }).forEach(function(x){
-        var label=x.category==="COLLECTION"?"collection action":
-          x.category==="REFUND"?"refund action":
-          x.category==="FOLLOW_UP"?"follow-up":
-          "client progress";
-        var detail=(x.title||"").trim();
-        if(x.summary)detail+=(detail?": ":"")+String(x.summary).trim();
-        addWork(work,(x.client_name?x.client_name+" — ":"")+label+(detail?": "+detail:""));
-      });
-
-      activity.filter(function(x){
-        if(x.event_type!=="dashboard_item_resolved")return false;
-        if(isNoiseText((x.title||"")+" "+(x.detail||"")))return false;
-        return !!x.client_name;
-      }).forEach(function(x){
-        addWork(work,x.client_name+" — completed: "+String(x.title||"").replace(/^DONE:\s*/i,""));
-      });
+      // Dashboard state/sync events are intentionally excluded from EOD outcomes.
+      // The report is about work Dave actually did today, not records the system touched.
 
       // Consolidate multiple same-client events into one readable line where possible.
       var consolidated=[],byClient=Object.create(null);
@@ -946,32 +918,28 @@
       if(work.length)work.slice(0,24).forEach(function(x){lines.push("• "+x)});
       else lines.push("• No meaningful tracked client activity was recorded today.");
 
-      // Carry-over is today's unfinished work, not the entire open dashboard.
-      // Include items touched/created today, items explicitly due by end of today, and
-      // clients for whom today's activity created a clear unresolved next action.
-      var todayClientKeys=Object.create(null);
-      work.forEach(function(w){var name=String(w||"").split(" — ")[0];if(name)todayClientKeys[normaliseEod(name)]=true});
-      var carrySeen=Object.create(null);
-      var openRisks=items.filter(function(x){
-        if(!["REFUND","COLLECTION","CLIENT_ATTENTION","FOLLOW_UP"].includes(x.category)||x.status!=="OPEN")return false;
-        if(isNoiseText((x.title||"")+" "+(x.summary||"")))return false;
-        var touched=changedItemIds[String(x.id)]||
-          (String(x.created_at||"")>=ctx.window.start&&String(x.created_at||"")<ctx.window.end);
-        var due=!!x.due_at&&String(x.due_at)<ctx.window.end;
-        var relatedToday=x.client_name&&todayClientKeys[normaliseEod(x.client_name)];
-        return touched||due||relatedToday;
-      }).filter(function(x){
-        var key=normaliseEod((x.client_name||"")+" "+x.category+" "+(x.title||""));
-        if(carrySeen[key])return false;carrySeen[key]=true;return true;
+      // Carry-over comes only from today's real work. Do not dump open dashboard state.
+      var carry=[],carryKeys=Object.create(null);
+      function addCarry(name,text){
+        var clean=String(text||"").replace(/\s+/g," ").trim();if(!clean)return;
+        var key=normaliseEod((name||"")+" "+clean);if(carryKeys[key])return;carryKeys[key]=true;
+        carry.push((name?name+" — ":"")+clean);
+      }
+      fathomMeetings.forEach(function(m){
+        var name=meetingPerson(m);
+        (m.action_items||[]).filter(function(a){return a&&a.description&&!a.completed}).slice(0,3).forEach(function(a){addCarry(name,cleanAction(a.description))});
       });
-      if(openRisks.length){
+      bookingStatuses.forEach(function(row){
+        if(row.status==="no_show"||row.status==="possible_no_show"){
+          var name=canonicalClientName(inviteeName(row.x));
+          var followed=heartbeat.some(function(h){return normaliseEod(h.client_name)===normaliseEod(name)});
+          if(!followed)addCarry(name,"Follow up after missed call");
+        }
+      });
+      if(carry.length){
         lines.push("");
         lines.push("*Carry-over / Follow-up*");
-        openRisks.slice(0,10).forEach(function(x){
-          var detail=String(x.summary||x.title||x.category).replace(/\s+/g," ").trim();
-          if(detail.length>220)detail=detail.slice(0,217).replace(/[,:;\-\s]+$/,"")+"…";
-          lines.push("• "+(x.client_name?x.client_name+" — ":"")+detail);
-        });
+        carry.slice(0,12).forEach(function(x){lines.push("• "+x)});
       }
 
       draft.value=lines.join("\n");
@@ -979,6 +947,7 @@
       var checks=[];
       checks.push('<div class="item-card"><div class="item-title">'+booked+' Calendly booking(s) found</div><div class="item-summary">'+likelyTaken+' taken · '+noShows+' marked no-show · '+possibleNoShows+' possible no-show · '+rescheduled+' rescheduled · '+canceled+' cancelled.</div></div>');
       checks.push('<div class="item-card"><div class="item-title">'+heartbeat.length+' meaningful Heartbeat message(s) sent from the Command Centre</div><div class="item-summary">Test messages and reminder-card noise are excluded.</div></div>');
+      checks.push('<div class="item-card"><div class="item-title">Dashboard backlog excluded</div><div class="item-summary">Refund, collection and attention records do not count as EOD activity unless you actually called or messaged the client today.</div></div>');
       if(ctx.calendly&&ctx.calendly.error)checks.push('<div class="item-card"><div class="item-title">Calendly warning</div><div class="item-summary">'+esc(ctx.calendly.error)+'</div></div>');
       if(ctx.fathom&&ctx.fathom.available){
         checks.push('<div class="item-card"><div class="item-title">'+fathomMeetings.length+' Fathom recording(s) found today</div><div class="item-summary">These now confirm calls taken and enrich the report with outcomes and next steps.</div></div>');
