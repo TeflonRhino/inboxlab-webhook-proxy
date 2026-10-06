@@ -1040,7 +1040,8 @@
     document.getElementById("contextStatus").textContent="Checking Airtable/Viktor, Heartbeat, Fathom and Calendly…";
     document.getElementById("contextBody").innerHTML='<div class="item-summary">Building the client story…</div>';
     try{
-      var ctx=await api("/dashboard/api/client-intelligence?name="+encodeURIComponent(name)),b=ctx.brief||{},sources=ctx.sources||{},at=sources.airtable||null,hb=sources.heartbeat||{},fa=sources.fathom||{},ca=sources.calendly||{};
+      var url="/dashboard/api/client-intelligence?name="+encodeURIComponent(name)+(itemId?"&item_id="+encodeURIComponent(itemId):"");
+      var ctx=await api(url),b=ctx.brief||{},sources=ctx.sources||{},at=sources.airtable||null,hb=sources.heartbeat||{},fa=sources.fathom||{},ca=sources.calendly||{};
       document.getElementById("contextName").textContent=ctx.client_name||name||"Client brief";
       document.getElementById("contextStatus").textContent="Unified client brief · generated "+fmt(ctx.generated_at);
       var html='<div class="brief-hero"><div class="stage">'+esc(b.stage||"Active client")+'</div><div class="brief-copy"><b>Why you’re speaking</b><br>'+esc(b.why_speaking||"No clear call reason found.")+'</div></div>';
