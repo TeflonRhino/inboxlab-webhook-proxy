@@ -324,8 +324,8 @@
     var existingCaseDraft=(data.queue||[]).find(function(q){return (q.status==="HOLD"||q.status==="APPROVED")&&String(q.reason||"").indexOf("CASE_DRAFT:"+x.id+":")===0});
     var caseAction=(isRefund||isCollection)
       ? '<div class="actions">'+(existingCaseDraft
-          ? '<button class="btn blue" data-jump="hold">Review Draft</button>'
-          : '<button class="btn primary" data-case-draft="'+x.id+'">Draft Message</button>')+'</div>'
+          ? (isCollection?'<button class="btn blue" data-collection-context="'+x.id+'">Review Context &amp; Draft</button>':'<button class="btn blue" data-jump="hold">Review Draft</button>')
+          : (isCollection?'<button class="btn primary" data-collection-context="'+x.id+'">Review Context &amp; Draft</button>':'<button class="btn primary" data-case-draft="'+x.id+'">Draft Message</button>'))+'</div>'
       : '';
     return '<article class="item-card" data-item="'+x.id+'"><div class="itop"><div>'+heading+'<div class="meta">'+metaParts.join(' · ')+'</div></div><span class="priority '+esc(x.priority)+'">'+esc(x.priority)+'</span></div>'+
       (x.summary?'<div class="item-summary">'+esc(x.summary)+'</div>':'')+
@@ -1034,7 +1034,7 @@
   async function openCollectionContext(id){
     collectionContext.classList.add("open");collectionContext.setAttribute("aria-hidden","false");
     document.getElementById("contextName").textContent="Collection context";
-    document.getElementById("contextStatus").textContent="Checking Heartbeat and Fathom…";
+    document.getElementById("contextStatus").textContent="Checking Airtable, Viktor, Heartbeat and Fathom…";
     document.getElementById("contextBody").innerHTML='<div class="item-summary">Building context…</div>';
     try{
       var ctx=await api("/dashboard/api/items/"+id+"/collection-context"),hb=ctx.heartbeat||{},fa=ctx.fathom||{},plans=ctx.plans||[];
@@ -1046,11 +1046,22 @@
       if(plans.length)html+='<div class="section"><div class="section-head"><h2>Plans & commitments</h2></div>'+plans.map(function(p){return '<div class="context-entry"><div class="meta">'+esc(p.source)+(p.date?" · "+fmt(p.date):"")+'</div>'+esc(p.text)+'</div>'}).join("")+'</div>';
       var hm=hb.relevant_messages||[];html+='<div class="section"><div class="section-head"><h2>Heartbeat payment context</h2></div>'+(hm.length?hm.map(function(m){return '<div class="context-entry"><div class="meta">'+esc(m.sender||"")+(m.timestamp?" · "+fmt(m.timestamp):"")+'</div>'+esc(m.text||"")+'</div>'}).join(""):empty("Nothing payment-related found","No relevant Heartbeat messages were detected."))+'</div>';
       var fm=fa.relevant_meetings||[];html+='<div class="section"><div class="section-head"><h2>Fathom call context</h2></div>'+(fm.length?fm.map(function(m){return '<div class="context-entry"><div class="meta">'+esc(m.title||"Call")+(m.created_at?" · "+fmt(m.created_at):"")+'</div>'+esc(m.summary||"Payment-related call found.")+(m.action_items&&m.action_items.length?'<div class="reason">Actions: '+esc(m.action_items.map(function(a){return a.description}).filter(Boolean).join(" · "))+'</div>':'')+'</div>'}).join(""):empty("Nothing payment-related found","No relevant Fathom call summaries were detected."))+'</div>';
-      html+='<div class="actions"><button class="btn primary" data-case-draft="'+id+'">Draft from this context</button><button class="btn" data-open-client-messages="'+esc(ctx.item.client_name||"")+'">Open Heartbeat chat</button></div>';
+      var existing=(data.queue||[]).find(function(q){return (q.status==="HOLD"||q.status==="APPROVED")&&String(q.reason||"").indexOf("CASE_DRAFT:"+id+":")===0});
+      html+='<div class="actions">'+(existing?'<button class="btn primary" data-review-existing-draft="'+existing.id+'">Review existing draft in Messages</button>':'<button class="btn primary" data-case-draft="'+id+'" data-context-draft="1">Create draft from this context</button>')+'<button class="btn" data-open-client-messages="'+esc(ctx.item.client_name||"")+'">Open Heartbeat chat</button></div>';
       document.getElementById("contextBody").innerHTML=html;
     }catch(err){document.getElementById("contextStatus").textContent="Could not load context";document.getElementById("contextBody").innerHTML=empty("Context unavailable",err.message)}
   }
   document.body.addEventListener("click",async function(e){
+    var reviewExisting=e.target.closest("[data-review-existing-draft]");
+    if(reviewExisting){
+      e.preventDefault();
+      var qid=Number(reviewExisting.dataset.reviewExistingDraft),qitem=(data.queue||[]).find(function(q){return Number(q.id)===qid});
+      if(!qitem){toast("Could not find that draft");return}
+      closeCollectionContext();
+      await openClientMessages(qitem.client_name,qitem.draft||"");
+      messageStatus("Collection context checked. Draft loaded for final review — add @mentions or URLs if needed, then use Review & Send.");
+      return;
+    }
     var cc=e.target.closest("[data-collection-context]");if(cc){e.preventDefault();openCollectionContext(cc.dataset.collectionContext);return}
     var client=e.target.closest("[data-open-client-messages]");
     if(client){e.preventDefault();openClientMessages(client.dataset.openClientMessages);return}
@@ -1060,9 +1071,14 @@
       try{
         draftButton.disabled=true;draftButton.textContent="Building draft…";
         var result=await api("/dashboard/api/items/"+draftButton.dataset.caseDraft+"/draft-message",{method:"POST"});
-        toast(result.existing?"Draft already waiting in Hold Queue":"Draft created: "+(result.strategy&&result.strategy.label||"ready for review"));
+        toast(result.existing?"Draft already exists":"Draft created: "+(result.strategy&&result.strategy.label||"ready for review"));
         await load();
-        switchView("hold");
+        var created=(data.queue||[]).find(function(q){return (q.status==="HOLD"||q.status==="APPROVED")&&String(q.reason||"").indexOf("CASE_DRAFT:"+draftButton.dataset.caseDraft+":")===0});
+        if(draftButton.dataset.contextDraft==="1"&&created){
+          closeCollectionContext();
+          await openClientMessages(created.client_name,created.draft||"");
+          messageStatus("Draft created from the context you reviewed. Make any final edits, add @mentions or URLs, then use Review & Send.");
+        }else switchView("hold");
       }catch(err){toast(err.message);draftButton.disabled=false;draftButton.textContent="Draft Message"}
       return;
     }
