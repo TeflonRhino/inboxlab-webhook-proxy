@@ -175,7 +175,7 @@
   var current="today";
   var titles={
     today:["Today","Your shortest useful view of what needs attention."],
-    hold:["Hold Queue","Review, edit and approve drafts without accidentally sending them."],
+    hold:["Hold Queue","Review pending drafts, then open them in Messages for final editing and sending."],
     messages:["Messages","Find a client, review their Heartbeat conversation and send a message."],
     clients:["Client Attention","A visual priority board built from what I find across your connected systems."],
     collections:["Collections","Open revenue actions surfaced from your work context."],
@@ -302,9 +302,7 @@
     var editable=x.status==="HOLD"||x.status==="APPROVED";
     var missing=!x.channel_id;
     var actions=compact?"":'<div class="actions">'+
-      (editable?'<button class="btn" data-qaction="save" data-id="'+x.id+'">Save edit</button>':'')+
-      (x.status==="HOLD"?'<button class="btn blue" data-qaction="approve" data-id="'+x.id+'" '+(missing?'disabled':'')+'>Approve</button><button class="btn primary" data-qaction="approve_send" data-id="'+x.id+'" '+(missing?'disabled':'')+'>Approve &amp; Send</button>':'')+
-      (x.status==="APPROVED"?'<button class="btn primary" data-qaction="post" data-id="'+x.id+'" '+(missing?'disabled':'')+'>Post to Heartbeat</button>':'')+
+      (editable?'<button class="btn primary" data-qaction="review_messages" data-id="'+x.id+'" '+(missing?'disabled':'')+'>Review in Messages</button>':'')+
       ((x.status==="HOLD"||x.status==="APPROVED")?'<button class="btn red" data-qaction="skip" data-id="'+x.id+'">Skip</button>':'')+
       '</div>';
     var warning=missing?'<div class="channel-warning"><b>Needs Heartbeat Chat</b><div>This client\'s chat was not live when the draft was created. Paste the Heartbeat chat URL below once it exists.</div><div class="channel-row"><form class="channel-row" data-channel-form="'+x.id+'"><input class="channel-input" type="url" name="heartbeat_url" inputmode="url" autocomplete="url" placeholder="Paste Heartbeat chat URL" data-channel-input="'+x.id+'"><button class="btn" type="submit">Attach chat</button></form></div></div>':'';
@@ -997,7 +995,7 @@
     }catch(e){toast(e.message);b.disabled=false}
   }
   function switchView(view){current=view;document.querySelectorAll("#nav button").forEach(function(b){b.classList.toggle("active",b.dataset.view===view)});document.querySelectorAll("main section[id^='view-']").forEach(function(s){s.classList.toggle("hidden",s.id!=="view-"+view)});document.getElementById("viewTitle").textContent=titles[view][0];document.getElementById("viewSub").textContent=titles[view][1];if(view==="calls")refreshCallsWorkspace();if(view==="today")refreshTodayIntelligence();}
-  async function openClientMessages(name){
+  async function openClientMessages(name,prefill){
     var search=document.getElementById("messageSearch");
     switchView("messages");
     search.value=name;
@@ -1016,7 +1014,9 @@
       var target=normaliseEod(name);
       var chat=messageMatches.find(function(ch){return normaliseEod(ch.name)===target})||messageMatches[0];
       if(selectedChat)messageDrafts[selectedChat.id]=messageDraft.value;
-      selectedChat=chat;messageDraft.value=messageDrafts[chat.id]||"";
+      selectedChat=chat;
+      if(prefill!=null)messageDrafts[chat.id]=String(prefill);
+      messageDraft.value=messageDrafts[chat.id]||"";
       document.getElementById("messageClient").textContent=chat.name||"Unnamed chat";
       document.getElementById("messageChannel").textContent="Heartbeat chat · "+chat.id;
       renderMessageMatches();
@@ -1108,9 +1108,19 @@
   });
   document.getElementById("holdQueue").addEventListener("submit",async function(e){var form=e.target.closest("[data-channel-form]");if(!form)return;e.preventDefault();var id=Number(form.dataset.channelForm),input=form.elements.heartbeat_url,url=input?String(input.value||"").trim():"",button=form.querySelector("button[type=submit]");try{if(button)button.disabled=true;if(!url)throw new Error("Paste the Heartbeat chat URL first");await api("/dashboard/api/hold-queue/"+id+"/attach-channel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:url})});toast("Heartbeat chat attached");await load();}catch(err){toast(err.message);if(button)button.disabled=false}});
   document.getElementById("holdQueue").addEventListener("click",async function(e){
-    var b=e.target.closest("[data-qaction]");if(!b)return;var id=Number(b.dataset.id),act=b.dataset.qaction,card=document.querySelector('[data-qcard="'+id+'"]');
+    var b=e.target.closest("[data-qaction]");if(!b)return;var id=Number(b.dataset.id),act=b.dataset.qaction,card=b.closest("[data-qcard]")||document.querySelector('[data-qcard="'+id+'"]');
     try{
       b.disabled=true;
+      if(act==="review_messages"){
+        var reviewDraft=card.querySelector("textarea").value.trim();if(!reviewDraft)throw new Error("Draft cannot be empty");
+        await api("/dashboard/api/hold-queue/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({draft:reviewDraft})});
+        var qitem=(data.queue||[]).find(function(q){return Number(q.id)===id});
+        if(!qitem)throw new Error("Could not find this Hold Queue item");
+        await openClientMessages(qitem.client_name,reviewDraft);
+        messageStatus("Draft loaded from Hold Queue. Review it here, add @mentions or URLs if needed, then use Review & Send.");
+        toast("Draft moved into Messages for final review");
+        return;
+      }
       if(act==="save"){var draft=card.querySelector("textarea").value.trim();if(!draft)throw new Error("Draft cannot be empty");await api("/dashboard/api/hold-queue/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({draft:draft})});toast("Draft saved — approval reset");}
       if(act==="approve"){var approveDraft=card.querySelector("textarea").value.trim();if(!approveDraft)throw new Error("Draft cannot be empty");await api("/dashboard/api/hold-queue/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({draft:approveDraft})});await api("/dashboard/api/hold-queue/"+id+"/approve",{method:"POST"});toast("Saved and approved — still not sent");}
       if(act==="approve_send"){
