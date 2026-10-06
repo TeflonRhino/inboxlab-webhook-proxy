@@ -479,9 +479,10 @@
       renderTodayPriorities();
     }finally{todayLoading=false}
   }
-  var cardsState=[];
+  var cardsState=[],canvasActiveClient=null;
   try{cardsState=JSON.parse(localStorage.getItem("inboxlab.cards.v1")||"[]")}catch(e){cardsState=[]}
-  function saveCards(){localStorage.setItem("inboxlab.cards.v1",JSON.stringify(cardsState))}
+  try{canvasActiveClient=JSON.parse(localStorage.getItem("inboxlab.cards.activeClient")||"null")}catch(e){canvasActiveClient=null}
+  function saveCards(){localStorage.setItem("inboxlab.cards.v1",JSON.stringify(cardsState));localStorage.setItem("inboxlab.cards.activeClient",JSON.stringify(canvasActiveClient))}
   function cardTitle(t){return({collections:"Collections",messages:"Messages",hold:"Hold Queue",refunds:"Refunds",attention:"Client Attention",followups:"Follow-ups",activity:"Activity",context:"Client Context"})[t]||t}
   function cardBody(card){
     if(card.type==="collections"){var a=data.items.filter(function(x){return x.category==="COLLECTION"});return a.length?a.map(function(x){return itemCard(x,false)}).join(""):empty("No collections","No open collection actions.")}
@@ -491,7 +492,7 @@
     if(card.type==="hold"){var q=data.queue.filter(function(x){return x.status==="HOLD"||x.status==="APPROVED"});return q.length?q.map(function(x){return qCard(x,false)}).join(""):empty("Hold Queue clear","No drafts waiting.")}
     if(card.type==="activity")return activityRows(data.activity,30);
     if(card.type==="messages")return '<form class="canvas-message-search" data-canvas-search="'+card.id+'"><input type="search" placeholder="Client name" value="'+esc(card.clientName||"")+'" required><button class="btn" type="submit">Open</button></form><div class="meta" data-canvas-client="'+card.id+'">'+esc(card.clientName?card.clientName+" · loading conversation…":"Search for a client without leaving Cards.")+'</div><div class="canvas-message-history" data-canvas-history="'+card.id+'"></div><form class="canvas-message-compose" data-canvas-compose="'+card.id+'"><textarea class="draft" placeholder="Message…" disabled required>'+esc(card.draft||"")+'</textarea><div class="actions"><button class="btn primary" type="submit" disabled>Review &amp; Send</button></div></form>';
-    if(card.type==="context")return card.contextHtml||empty("No client selected","Click a client in Collections to load their full context here.");
+    if(card.type==="context")return card.contextHtml||empty(canvasActiveClient?"Loading "+canvasActiveClient.name+"…":"No client selected","Select a client from Collections, Refunds, Client Attention or Messages and this card will follow them.");
     return "";
   }
   function renderCards(){
@@ -500,12 +501,37 @@
   }
   function addCard(type){var n=cardsState.length,id="c"+Date.now();cardsState.push({id:id,type:type,x:20+(n%4)*34,y:20+(n%4)*34,w:type==="messages"||type==="context"?520:440,h:type==="messages"||type==="context"?500:420,z:cardsState.reduce(function(m,c){return Math.max(m,c.z||1)},1)+1});saveCards();renderCards();return canvasCard(id)}
   function ensureCanvasCard(type){var card=cardsState.find(function(c){return c.type===type});if(!card)card=addCard(type);card.min=false;card.z=cardsState.reduce(function(m,c){return Math.max(m,c.z||1)},1)+1;saveCards();renderCards();return card}
+  function findCanvasItemForClient(name,preferredCategory){
+    var n=normaliseEod(name);return (data.items||[]).find(function(x){return x.client_name&&normaliseEod(x.client_name)===n&&(!preferredCategory||x.category===preferredCategory)})||(data.items||[]).find(function(x){return x.client_name&&normaliseEod(x.client_name)===n});
+  }
+  async function setCanvasActiveClient(name,itemId,category,opts){
+    if(!name)return;canvasActiveClient={name:name,itemId:itemId?Number(itemId):null,category:category||null};saveCards();
+    var item=itemId?(data.items||[]).find(function(x){return Number(x.id)===Number(itemId)}):findCanvasItemForClient(name,category);
+    if(item){canvasActiveClient.itemId=Number(item.id);canvasActiveClient.category=item.category;saveCards()}
+    if(!opts||opts.messages!==false)loadCanvasMessages(name);
+    if(item&&item.category==="COLLECTION")loadCanvasContext(item.id);
+    else loadCanvasGeneralContext(name,item&&item.id,item&&item.category);
+  }
+  async function loadCanvasGeneralContext(name,itemId,category){
+    var card=ensureCanvasCard("context");card.clientName=name;card.contextHtml='<div class="item-summary">Building '+esc(name)+' client context…</div>';saveCards();renderCards();
+    try{var ctx=await api("/dashboard/api/client-intelligence?name="+encodeURIComponent(name)+(itemId?"&item_id="+encodeURIComponent(itemId):"")),b=ctx.brief||{},sources=ctx.sources||{},at=sources.airtable||null,hb=sources.heartbeat||{},fa=sources.fathom||{},ca=sources.calendly||{};
+      var html='<div class="brief-hero"><div class="stage">'+esc(b.stage||category||"CLIENT CONTEXT")+'</div><b>'+esc(ctx.client_name||name)+'</b><div class="brief-copy"><b>Why you’re speaking</b><br>'+esc(b.why_speaking||"No clear reason surfaced.")+'</div></div>';
+      html+='<div class="context-grid"><div class="brief-box"><b>Where they’re at</b><div class="brief-copy">'+esc(b.where_at||"No progress summary found.")+'</div></div><div class="brief-box"><b>Original goal</b><div class="brief-copy">'+esc(b.original_goal||"No original goal found.")+'</div></div><div class="brief-box"><b>Current bottleneck</b><div class="brief-copy">'+esc(b.current_unknown||"Confirm current bottleneck.")+'</div></div><div class="brief-box"><b>Be aware of</b><div class="brief-copy">'+esc(b.awareness||"No major warning surfaced.")+'</div></div></div>';
+      if(at)html+='<div class="brief-box"><b>Airtable / Viktor</b><div style="white-space:pre-wrap">'+esc(at.notes||"No operational notes.")+'</div></div>';
+      var hm=(hb.messages||[]).slice(0,10);if(hm.length)html+='<div class="brief-box"><b>Recent Heartbeat</b>'+hm.map(function(m){return '<div class="context-entry"><div class="meta">'+esc(m.sender||"Heartbeat")+(m.timestamp?" · "+fmt(m.timestamp):"")+'</div>'+esc(m.text||"")+'</div>'}).join("")+'</div>';
+      var fm=(fa.meetings||[]).slice(0,5);if(fm.length)html+='<div class="brief-box"><b>Recent Fathom calls</b>'+fm.map(function(m){return '<div class="context-entry"><div class="meta">'+esc(m.title||"Call")+(m.created_at?" · "+fmt(m.created_at):"")+'</div>'+esc(m.summary||"")+'</div>'}).join("")+'</div>';
+      var ev=(ca.events||[]).slice(0,5);if(ev.length)html+='<div class="brief-box"><b>Calendly</b>'+ev.map(function(x){return '<div class="context-entry">'+esc(x.name||"Call")+(x.start_time?" · "+esc(fmt(x.start_time)):"")+'</div>'}).join("")+'</div>';
+      html+='<div class="actions"><button class="btn primary" data-canvas-open-messages="'+esc(ctx.client_name||name)+'">Open in Messages card</button></div>';
+      card.contextHtml=html;saveCards();renderCards();
+    }catch(err){card.contextHtml=empty("Context unavailable",err.message);saveCards();renderCards()}
+  }
   async function loadCanvasMessages(name,prefill){
     var card=ensureCanvasCard("messages");card.clientName=name;if(prefill!=null)card.draft=String(prefill);saveCards();renderCards();
     var el=document.querySelector('[data-work-card="'+card.id+'"]'),hist=el.querySelector("[data-canvas-history]"),label=el.querySelector("[data-canvas-client]"),ta=el.querySelector("textarea"),send=el.querySelector("[data-canvas-compose] button");
     try{hist.innerHTML=empty("Loading…","Fetching Heartbeat conversation.");var sr=await api("/dashboard/api/messages/search?q="+encodeURIComponent(name)),matches=sr.matches||[];if(!matches.length)throw new Error("No Heartbeat chat found");var target=normaliseEod(name),chat=matches.find(function(x){return normaliseEod(x.name)===target})||matches[0];el.dataset.chatId=chat.id;el.dataset.chatName=chat.name||name;card.chatId=chat.id;card.chatName=chat.name||name;label.textContent=(chat.name||name)+" · Heartbeat chat "+chat.id;var ctx=await api("/dashboard/api/messages/"+encodeURIComponent(chat.id)+"/context"),msgs=(ctx.messages||[]).slice().sort(function(a,b){return(Date.parse(a.timestamp)||0)-(Date.parse(b.timestamp)||0)});hist.innerHTML=msgs.length?msgs.map(function(m){return '<div class="context-entry"><div class="meta">'+esc(m.sender||"Unknown")+' · '+fmt(m.timestamp)+'</div>'+esc(m.text||"")+'</div>'}).join(""):empty("No messages","Start the conversation below.");ta.disabled=false;send.disabled=false;saveCards()}catch(err){hist.innerHTML=empty("Could not open chat",err.message)}
   }
   async function loadCanvasContext(id){
+    var item0=(data.items||[]).find(function(x){return Number(x.id)===Number(id)});if(item0){canvasActiveClient={name:item0.client_name,itemId:Number(item0.id),category:item0.category};saveCards()}
     var card=ensureCanvasCard("context");card.contextHtml='<div class="item-summary">Building full client context…</div>';saveCards();renderCards();
     try{var ctx=await api("/dashboard/api/items/"+id+"/collection-context"),hb=ctx.heartbeat||{},fa=ctx.fathom||{},plans=ctx.plans||[],at=ctx.airtable||null;
       var html='<div class="brief-hero"><div class="stage">COLLECTION CONTEXT</div><b>'+esc(ctx.item.client_name||"Client")+'</b><div class="brief-copy">'+esc(ctx.item.summary||"No collection summary.")+'</div></div>';
@@ -1044,7 +1070,7 @@
       await refreshCallsWorkspace();
     }catch(e){toast(e.message);b.disabled=false}
   }
-  function switchView(view){current=view;document.querySelectorAll("#nav button").forEach(function(b){b.classList.toggle("active",b.dataset.view===view)});document.querySelectorAll("main section[id^='view-']").forEach(function(s){s.classList.toggle("hidden",s.id!=="view-"+view)});document.getElementById("viewTitle").textContent=titles[view][0];document.getElementById("viewSub").textContent=titles[view][1];if(view==="calls")refreshCallsWorkspace();if(view==="today")refreshTodayIntelligence();if(view==="cards")renderCards();}
+  function switchView(view){current=view;document.querySelectorAll("#nav button").forEach(function(b){b.classList.toggle("active",b.dataset.view===view)});document.querySelectorAll("main section[id^='view-']").forEach(function(s){s.classList.toggle("hidden",s.id!=="view-"+view)});document.getElementById("viewTitle").textContent=titles[view][0];document.getElementById("viewSub").textContent=titles[view][1];if(view==="calls")refreshCallsWorkspace();if(view==="today")refreshTodayIntelligence();if(view==="cards"){renderCards();var cc=cardsState.find(function(c){return c.type==="context"});if(cc&&canvasActiveClient&&!cc.contextHtml){if(canvasActiveClient.itemId&&canvasActiveClient.category==="COLLECTION")loadCanvasContext(canvasActiveClient.itemId);else loadCanvasGeneralContext(canvasActiveClient.name,canvasActiveClient.itemId,canvasActiveClient.category)}}}
   async function openClientMessages(name,prefill){
     var search=document.getElementById("messageSearch");
     switchView("messages");
@@ -1256,8 +1282,9 @@
   document.getElementById("cardsCanvas").addEventListener("pointermove",function(e){if(!drag)return;drag.el.style.left=Math.max(0,drag.x+e.clientX-drag.sx)+"px";drag.el.style.top=Math.max(0,drag.y+e.clientY-drag.sy)+"px"});
   document.getElementById("cardsCanvas").addEventListener("pointerup",function(){if(!drag)return;persistCardGeometry(drag.el);drag=null});
   document.getElementById("cardsCanvas").addEventListener("click",async function(e){
+    var picked=e.target.closest("[data-client-brief]");if(picked){e.preventDefault();setCanvasActiveClient(picked.dataset.clientBrief,picked.dataset.clientItem||"",picked.dataset.clientCategory||"");return}
     var collection=e.target.closest("[data-collection-context]");
-    if(collection){e.preventDefault();var item=data.items.find(function(x){return Number(x.id)===Number(collection.dataset.collectionContext)});if(item)loadCanvasMessages(item.client_name);loadCanvasContext(collection.dataset.collectionContext);return}
+    if(collection){e.preventDefault();var item=data.items.find(function(x){return Number(x.id)===Number(collection.dataset.collectionContext)});if(item)setCanvasActiveClient(item.client_name,item.id,item.category);else loadCanvasContext(collection.dataset.collectionContext);return}
     var openMsg=e.target.closest("[data-canvas-open-messages]");if(openMsg){e.preventDefault();loadCanvasMessages(openMsg.dataset.canvasOpenMessages);return}
     var draftCase=e.target.closest("[data-canvas-draft-case]");if(draftCase){e.preventDefault();try{draftCase.disabled=true;var result=await api("/dashboard/api/items/"+draftCase.dataset.canvasDraftCase+"/draft-message",{method:"POST"});await load();var q=(data.queue||[]).find(function(x){return (x.status==="HOLD"||x.status==="APPROVED")&&String(x.reason||"").indexOf("CASE_DRAFT:"+draftCase.dataset.canvasDraftCase+":")===0});if(q)loadCanvasMessages(q.client_name,q.draft||"");toast(result.existing?"Existing draft loaded in Messages":"Draft created and loaded in Messages")}catch(err){toast(err.message)}return}
     var b=e.target.closest("[data-card-min],[data-card-max],[data-card-close]");if(!b)return;
@@ -1270,7 +1297,7 @@
   document.getElementById("cardsCanvas").addEventListener("mouseup",function(e){var el=e.target.closest(".work-card");if(el)setTimeout(function(){persistCardGeometry(el)},0)});
   document.getElementById("cardsCanvas").addEventListener("input",function(e){var ta=e.target.closest("[data-canvas-compose] textarea");if(!ta)return;var card=canvasCard(ta.closest(".work-card").dataset.workCard);if(card){card.draft=ta.value;saveCards()}});
   document.getElementById("cardsCanvas").addEventListener("submit",async function(e){
-    var sf=e.target.closest("[data-canvas-search]");if(sf){e.preventDefault();var cardEl=sf.closest(".work-card"),q=sf.querySelector("input").value.trim(),hist=cardEl.querySelector("[data-canvas-history]"),label=cardEl.querySelector("[data-canvas-client]"),compose=cardEl.querySelector("[data-canvas-compose]"),ta=compose.querySelector("textarea"),send=compose.querySelector("button");try{hist.innerHTML=empty("Loading…","Fetching Heartbeat conversation.");var sr=await api("/dashboard/api/messages/search?q="+encodeURIComponent(q)),matches=sr.matches||[];if(!matches.length)throw new Error("No Heartbeat chat found");var target=normaliseEod(q),chat=matches.find(function(x){return normaliseEod(x.name)===target})||matches[0];cardEl.dataset.chatId=chat.id;cardEl.dataset.chatName=chat.name||q;label.textContent=(chat.name||q)+" · Heartbeat chat "+chat.id;var ctx=await api("/dashboard/api/messages/"+encodeURIComponent(chat.id)+"/context"),msgs=(ctx.messages||[]).slice().sort(function(a,b){return(Date.parse(a.timestamp)||0)-(Date.parse(b.timestamp)||0)});hist.innerHTML=msgs.length?msgs.map(function(m){return '<div class="context-entry"><div class="meta">'+esc(m.sender||"Unknown")+' · '+fmt(m.timestamp)+'</div>'+esc(m.text||"")+'</div>'}).join(""):empty("No messages","Start the conversation below.");ta.disabled=false;send.disabled=false}catch(err){hist.innerHTML=empty("Could not open chat",err.message)}return}
+    var sf=e.target.closest("[data-canvas-search]");if(sf){e.preventDefault();var cardEl=sf.closest(".work-card"),q=sf.querySelector("input").value.trim(),hist=cardEl.querySelector("[data-canvas-history]"),label=cardEl.querySelector("[data-canvas-client]"),compose=cardEl.querySelector("[data-canvas-compose]"),ta=compose.querySelector("textarea"),send=compose.querySelector("button");try{hist.innerHTML=empty("Loading…","Fetching Heartbeat conversation.");var sr=await api("/dashboard/api/messages/search?q="+encodeURIComponent(q)),matches=sr.matches||[];if(!matches.length)throw new Error("No Heartbeat chat found");var target=normaliseEod(q),chat=matches.find(function(x){return normaliseEod(x.name)===target})||matches[0];cardEl.dataset.chatId=chat.id;cardEl.dataset.chatName=chat.name||q;label.textContent=(chat.name||q)+" · Heartbeat chat "+chat.id;var ctx=await api("/dashboard/api/messages/"+encodeURIComponent(chat.id)+"/context"),msgs=(ctx.messages||[]).slice().sort(function(a,b){return(Date.parse(a.timestamp)||0)-(Date.parse(b.timestamp)||0)});hist.innerHTML=msgs.length?msgs.map(function(m){return '<div class="context-entry"><div class="meta">'+esc(m.sender||"Unknown")+' · '+fmt(m.timestamp)+'</div>'+esc(m.text||"")+'</div>'}).join(""):empty("No messages","Start the conversation below.");ta.disabled=false;send.disabled=false;var state=canvasCard(cardEl.dataset.workCard);if(state){state.clientName=chat.name||q;state.chatId=chat.id;state.chatName=chat.name||q;saveCards()}canvasActiveClient={name:chat.name||q,itemId:null,category:null};saveCards();var linked=findCanvasItemForClient(chat.name||q);if(linked){canvasActiveClient.itemId=Number(linked.id);canvasActiveClient.category=linked.category;saveCards();if(linked.category==="COLLECTION")loadCanvasContext(linked.id);else loadCanvasGeneralContext(chat.name||q,linked.id,linked.category)}else loadCanvasGeneralContext(chat.name||q,null,null)}catch(err){hist.innerHTML=empty("Could not open chat",err.message)}return}
     var cf=e.target.closest("[data-canvas-compose]");if(cf){e.preventDefault();var cardEl=cf.closest(".work-card"),chatId=cardEl.dataset.chatId,name=cardEl.dataset.chatName,msg=cf.querySelector("textarea").value.trim();if(!chatId||!msg)return;if(!confirm("Send this exact message to "+name+"?\n\n"+msg))return;try{await api("/dashboard/api/messages/"+encodeURIComponent(chatId)+"/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:msg,client_name:name})});toast("Message sent to Heartbeat");cf.querySelector("textarea").value=""}catch(err){toast(err.message)}}
   });
   load();
