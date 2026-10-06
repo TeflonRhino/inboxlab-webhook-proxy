@@ -97,6 +97,17 @@ async function ensureOpsTables() {
     ALTER TABLE dashboard_items ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
     CREATE INDEX IF NOT EXISTS dashboard_items_category_status_idx ON dashboard_items(category,status);
 
+    CREATE TABLE IF NOT EXISTS dashboard_collection_context (
+      client_name TEXT PRIMARY KEY,
+      airtable_record_id TEXT,
+      engagement_status TEXT,
+      assigned_coach TEXT,
+      last_update_date TEXT,
+      notes TEXT,
+      payment_notes TEXT,
+      heartbeat_url TEXT,
+      synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
     CREATE TABLE IF NOT EXISTS dashboard_actions (
       id BIGSERIAL PRIMARY KEY,
       action_type TEXT NOT NULL,
@@ -697,6 +708,30 @@ function buildServer() {
     });
   });
 
+  server.registerTool("upsert_collection_airtable_context", {
+    description: "Upsert Airtable/Viktor context used by the Collections dashboard. This does not message clients or alter Airtable.",
+    inputSchema: z.object({
+      client_name: z.string().min(1),
+      airtable_record_id: z.string().optional(),
+      engagement_status: z.string().optional(),
+      assigned_coach: z.string().optional(),
+      last_update_date: z.string().optional(),
+      notes: z.string().optional(),
+      payment_notes: z.string().optional(),
+      heartbeat_url: z.string().optional()
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    securitySchemes: [{ type: "noauth" }]
+  }, async (input) => {
+    await ensureOpsTables();
+    const result=await pool!.query(`
+      INSERT INTO dashboard_collection_context(client_name,airtable_record_id,engagement_status,assigned_coach,last_update_date,notes,payment_notes,heartbeat_url,synced_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+      ON CONFLICT(client_name) DO UPDATE SET airtable_record_id=EXCLUDED.airtable_record_id,engagement_status=EXCLUDED.engagement_status,assigned_coach=EXCLUDED.assigned_coach,last_update_date=EXCLUDED.last_update_date,notes=EXCLUDED.notes,payment_notes=EXCLUDED.payment_notes,heartbeat_url=EXCLUDED.heartbeat_url,synced_at=NOW()
+      RETURNING *`,[input.client_name,input.airtable_record_id||null,input.engagement_status||null,input.assigned_coach||null,input.last_update_date||null,input.notes||null,input.payment_notes||null,input.heartbeat_url||null]);
+    return textResult({context:result.rows[0]});
+  });
+
   server.registerTool("queue_client_reply", {
     description: "Save a drafted client reply to the persistent HOLD queue. This never sends a message.",
     inputSchema: z.object({
@@ -1283,6 +1318,12 @@ app.post("/dashboard/api/eod/send", requireDashboardAuth, async (req, res) => {
 
 async function getCollectionContext(item: any) {
   const name = String(item?.client_name || "").trim();
+  let airtable: any = null;
+  try {
+    const ar = await pool!.query(`SELECT * FROM dashboard_collection_context WHERE LOWER(TRIM(client_name))=LOWER(TRIM($1)) LIMIT 1`,[name]);
+    airtable = ar.rows[0] || null;
+  } catch {}
+
   let heartbeat: any = { found: false, messages: [], error: null };
   try {
     const matches = await findChatChannels(name);
@@ -1331,6 +1372,7 @@ async function getCollectionContext(item: any) {
   ].slice(0,10);
   return {
     item:{id:item.id,client_name:item.client_name,title:item.title,summary:item.summary,priority:item.priority,source:item.source,metadata:item.metadata||{}},
+    airtable,
     signals:{payment_discussed:relevantHeartbeat.length>0||relevantMeetings.length>0,plans_found:plans.length>0},
     plans,
     heartbeat:{...heartbeat,relevant_messages:relevantHeartbeat},
@@ -1384,6 +1426,7 @@ app.post("/dashboard/api/items/:id/draft-message", requireDashboardAuth, async (
       if (item.category === "COLLECTION") {
         const ctx = await getCollectionContext(item);
         compact = [
+          ...(ctx.airtable ? [{text:"Airtable operational notes: "+String(ctx.airtable.notes||"")},{text:"Viktor payment notes: "+String(ctx.airtable.payment_notes||"")}] : []),
           ...(ctx.heartbeat?.relevant_messages || []).map((m:any)=>({text:m.text})),
           ...(ctx.fathom?.relevant_meetings || []).map((m:any)=>({text:[m.summary,...(m.action_items||[]).map((a:any)=>a.description)].filter(Boolean).join(" ")})),
           ...(ctx.plans || []).map((p:any)=>({text:"Agreed plan: "+p.text}))
