@@ -1269,6 +1269,31 @@ app.get("/dashboard/api/eod/context", requireDashboardAuth, async (req, res) => 
   }
 });
 
+app.post("/dashboard/api/calls/reminder-draft", requireDashboardAuth, async (req,res)=>{
+  try{
+    const clientName=String(req.body?.client_name||"").trim();
+    const callTitle=String(req.body?.call_title||"").trim()||"our call";
+    const start=String(req.body?.call_start_time||"").trim();
+    const timezone=String(req.body?.timezone||"").trim();
+    if(!clientName)return res.status(400).json({error:"Client name is required"});
+    if(!start||Number.isNaN(Date.parse(start)))return res.status(400).json({error:"Valid call start time is required"});
+    const first=firstName(clientName);
+    const when=new Intl.DateTimeFormat("en-GB",{weekday:"short",hour:"numeric",minute:"2-digit",timeZone:timezone||"Europe/London",timeZoneName:"short"}).format(new Date(start));
+    const intelligence=await buildClientIntelligence(clientName).catch(()=>null);
+    const focus=firstUsefulSentence(intelligence?.brief?.why_speaking||intelligence?.brief?.recommended_focus||"",120);
+    const titleClean=callTitle.replace(/\s+/g," ").trim();
+    const contextHint=focus&&!/no clear|re-establish/i.test(focus)?" Looking forward to catching up.":"";
+    const draft=`Hey ${first}, just a quick reminder we’ve got ${titleClean} booked for ${when}.${contextHint} See you then!`;
+    const reason=`CALL_REMINDER:${start} | ${titleClean} | Client timezone: ${timezone||"Europe/London"}`;
+    const existing=await pool!.query(`SELECT * FROM heartbeat_hold_queue WHERE LOWER(TRIM(client_name))=LOWER(TRIM($1)) AND reason LIKE $2 AND status IN ('HOLD','APPROVED') ORDER BY created_at DESC LIMIT 1`,[clientName,`CALL_REMINDER:${start}%`]);
+    if(existing.rowCount)return res.json({created:false,existing:true,item:existing.rows[0],context_used:Boolean(intelligence)});
+    let queued;
+    try{queued=await queueReply(clientName,draft,reason)}catch(err){if(/No matching Heartbeat CHAT channel found/i.test(err instanceof Error?err.message:""))queued=await queuePendingHeartbeatReply(clientName,draft,reason);else throw err}
+    await logActivity({eventType:"call_reminder_drafted",title:"Call reminder drafted",detail:`${titleClean} · ${when}`,clientName,entityType:"hold_queue",entityId:queued.id,actor:"Dave"});
+    res.json({created:true,item:queued,context_used:Boolean(intelligence)});
+  }catch(err){res.status(500).json({error:err instanceof Error?err.message:"Failed to draft call reminder"});}
+});
+
 app.post("/dashboard/api/eod/no-show", requireDashboardAuth, async (req, res) => {
   try {
     await ensureOpsTables();
