@@ -306,7 +306,7 @@
       (x.status==="APPROVED"?'<button class="btn primary" data-qaction="post" data-id="'+x.id+'" '+(missing?'disabled':'')+'>Post to Heartbeat</button>':'')+
       ((x.status==="HOLD"||x.status==="APPROVED")?'<button class="btn red" data-qaction="skip" data-id="'+x.id+'">Skip</button>':'')+
       '</div>';
-    var warning=missing?'<div class="channel-warning"><b>Needs Heartbeat Chat</b><div>This client\'s chat was not live when the draft was created. Paste the Heartbeat chat URL below once it exists.</div><div class="channel-row"><input class="channel-input" placeholder="Paste Heartbeat chat URL" data-channel-input="'+x.id+'"><button class="btn" data-qaction="attach_channel" data-id="'+x.id+'">Attach chat</button></div></div>':'';
+    var warning=missing?'<div class="channel-warning"><b>Needs Heartbeat Chat</b><div>This client\'s chat was not live when the draft was created. Paste the Heartbeat chat URL below once it exists.</div><div class="channel-row"><form class="channel-row" data-channel-form="'+x.id+'"><input class="channel-input" type="url" name="heartbeat_url" inputmode="url" autocomplete="url" placeholder="Paste Heartbeat chat URL" data-channel-input="'+x.id+'"><button class="btn" type="submit">Attach chat</button></form></div></div>':'';
     return '<article class="queue-card" data-qcard="'+x.id+'"><div class="qtop"><div><div class="client">'+esc(x.client_name)+'</div><div class="meta">#'+x.id+' · '+fmt(x.created_at)+(missing?' · Needs chat':'')+'</div></div><span class="pill '+(missing?'hold':String(x.status).toLowerCase())+'">'+(missing?'NEEDS CHAT':esc(x.status))+'</span></div>'+
       (compact?'<div class="preview">'+esc(x.draft)+'</div>':'<textarea class="draft" '+(editable?'':'disabled')+'>'+esc(x.draft)+'</textarea>')+
       (x.reason?'<div class="reason">Why: '+esc(x.reason)+'</div>':'')+warning+actions+'</article>';
@@ -1081,7 +1081,7 @@
     if(!confirm("Send this exact EOD report to #3-csm-eod-reports now?"))return;
     try{this.disabled=true;await api("/dashboard/api/eod/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:message})});toast("EOD sent to Slack");await load()}catch(e){toast(e.message)}finally{this.disabled=false}
   });
-  document.getElementById("holdQueue").addEventListener("click",async function(e){
+  document.getElementById("holdQueue").addEventListener("submit",async function(e){var form=e.target.closest("[data-channel-form]");if(!form)return;e.preventDefault();var id=Number(form.dataset.channelForm),input=form.elements.heartbeat_url,url=input?String(input.value||"").trim():"",button=form.querySelector("button[type=submit]");try{if(button)button.disabled=true;if(!url)throw new Error("Paste the Heartbeat chat URL first");await api("/dashboard/api/hold-queue/"+id+"/attach-channel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:url})});toast("Heartbeat chat attached");await load();}catch(err){toast(err.message);if(button)button.disabled=false}});\n  document.getElementById("holdQueue").addEventListener("click",async function(e){
     var b=e.target.closest("[data-qaction]");if(!b)return;var id=Number(b.dataset.id),act=b.dataset.qaction,card=document.querySelector('[data-qcard="'+id+'"]');
     try{
       b.disabled=true;
