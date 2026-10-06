@@ -898,13 +898,22 @@
         addWork(work,name+" — "+label);
       });
 
+      // Dashboard items are state, not activity. Only include a dashboard item in today's
+      // outcomes when the activity ledger proves that something happened to it today.
+      // This prevents synced refund/collection backlogs from being dumped into the EOD.
+      var changedItemIds=Object.create(null);
+      activity.forEach(function(a){
+        if(a.entity_type==="dashboard_item"&&a.entity_id!=null&&/resolved|created|updated|drafted|completed/i.test(String(a.event_type||""))){
+          changedItemIds[String(a.entity_id)]=true;
+        }
+      });
       items.filter(function(x){
         if(!["COLLECTION","REFUND","CLIENT_ATTENTION","FOLLOW_UP"].includes(x.category))return false;
-        if(!(String(x.updated_at||"")>=ctx.window.start && String(x.updated_at||"")<ctx.window.end))return false;
+        if(!changedItemIds[String(x.id)])return false;
         return !isNoiseText((x.title||"")+" "+(x.summary||""));
       }).forEach(function(x){
-        var label=x.category==="COLLECTION"?"collection activity":
-          x.category==="REFUND"?"refund activity":
+        var label=x.category==="COLLECTION"?"collection action":
+          x.category==="REFUND"?"refund action":
           x.category==="FOLLOW_UP"?"follow-up":
           "client progress";
         var detail=(x.title||"").trim();
@@ -920,21 +929,48 @@
         addWork(work,x.client_name+" — completed: "+String(x.title||"").replace(/^DONE:\s*/i,""));
       });
 
+      // Consolidate multiple same-client events into one readable line where possible.
+      var consolidated=[],byClient=Object.create(null);
+      work.forEach(function(w){
+        var parts=String(w).split(" — "),name=parts.length>1?parts.shift():"",detail=parts.join(" — ");
+        var key=normaliseEod(name);
+        if(!key){consolidated.push(w);return}
+        if(byClient[key]==null){byClient[key]=consolidated.length;consolidated.push(w);return}
+        var idx=byClient[key],existing=consolidated[idx],ed=normaliseEod(existing);
+        if(detail&&!ed.includes(normaliseEod(detail)))consolidated[idx]=existing+"; "+detail.charAt(0).toLowerCase()+detail.slice(1);
+      });
+      work=consolidated;
+
       lines.push("");
       lines.push("*Activity / Outcomes*");
-      if(work.length)work.slice(0,30).forEach(function(x){lines.push("• "+x)});
+      if(work.length)work.slice(0,24).forEach(function(x){lines.push("• "+x)});
       else lines.push("• No meaningful tracked client activity was recorded today.");
 
+      // Carry-over is today's unfinished work, not the entire open dashboard.
+      // Include items touched/created today, items explicitly due by end of today, and
+      // clients for whom today's activity created a clear unresolved next action.
+      var todayClientKeys=Object.create(null);
+      work.forEach(function(w){var name=String(w||"").split(" — ")[0];if(name)todayClientKeys[normaliseEod(name)]=true});
+      var carrySeen=Object.create(null);
       var openRisks=items.filter(function(x){
-        return ["REFUND","COLLECTION","CLIENT_ATTENTION","FOLLOW_UP"].includes(x.category) &&
-          x.status==="OPEN" &&
-          !isNoiseText((x.title||"")+" "+(x.summary||""));
+        if(!["REFUND","COLLECTION","CLIENT_ATTENTION","FOLLOW_UP"].includes(x.category)||x.status!=="OPEN")return false;
+        if(isNoiseText((x.title||"")+" "+(x.summary||"")))return false;
+        var touched=changedItemIds[String(x.id)]||
+          (String(x.created_at||"")>=ctx.window.start&&String(x.created_at||"")<ctx.window.end);
+        var due=!!x.due_at&&String(x.due_at)<ctx.window.end;
+        var relatedToday=x.client_name&&todayClientKeys[normaliseEod(x.client_name)];
+        return touched||due||relatedToday;
+      }).filter(function(x){
+        var key=normaliseEod((x.client_name||"")+" "+x.category+" "+(x.title||""));
+        if(carrySeen[key])return false;carrySeen[key]=true;return true;
       });
       if(openRisks.length){
         lines.push("");
         lines.push("*Carry-over / Follow-up*");
-        openRisks.slice(0,12).forEach(function(x){
-          lines.push("• "+(x.client_name?x.client_name+" — ":"")+(x.title||x.category)+(x.summary?": "+x.summary:""));
+        openRisks.slice(0,10).forEach(function(x){
+          var detail=String(x.summary||x.title||x.category).replace(/\s+/g," ").trim();
+          if(detail.length>220)detail=detail.slice(0,217).replace(/[,:;\-\s]+$/,"")+"…";
+          lines.push("• "+(x.client_name?x.client_name+" — ":"")+detail);
         });
       }
 
