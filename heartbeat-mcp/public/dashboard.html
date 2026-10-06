@@ -322,8 +322,15 @@
     if(!isRefund&&!isCollection&&x.client_name)metaParts.push(esc(x.client_name));
     if(showCategory)metaParts.push(esc(labelCategory(x.category)));
     metaParts.push(esc(x.source||"ChatGPT"));
+    var existingCaseDraft=(data.queue||[]).find(function(q){return (q.status==="HOLD"||q.status==="APPROVED")&&String(q.reason||"").indexOf("CASE_DRAFT:"+x.id+":")===0});
+    var caseAction=(isRefund||isCollection)
+      ? '<div class="actions">'+(existingCaseDraft
+          ? '<button class="btn blue" data-jump="hold">Review Draft</button>'
+          : '<button class="btn primary" data-case-draft="'+x.id+'">Draft Message</button>')+'</div>'
+      : '';
     return '<article class="item-card" data-item="'+x.id+'"><div class="itop"><div>'+heading+'<div class="meta">'+metaParts.join(' · ')+'</div></div><span class="priority '+esc(x.priority)+'">'+esc(x.priority)+'</span></div>'+
       (x.summary?'<div class="item-summary">'+esc(x.summary)+'</div>':'')+
+      caseAction+
       (isNoShow?'<div class="actions"><button class="btn red" data-noshow="'+x.id+'">Mark as No Show in Calendly</button></div>':'')+
       '<div class="item-foot"><span>'+(x.due_at?'Due '+fmt(x.due_at):'Updated '+fmt(x.updated_at))+'</span><div><button class="btn" data-iresolve="DONE" data-id="'+x.id+'">Done</button> <button class="btn" data-iresolve="DISMISSED" data-id="'+x.id+'">Dismiss</button></div></div></article>';
   }
@@ -1019,9 +1026,21 @@
     }
   }
   document.getElementById("nav").addEventListener("click",function(e){var b=e.target.closest("button[data-view]");if(b)switchView(b.dataset.view)});
-  document.body.addEventListener("click",function(e){
+  document.body.addEventListener("click",async function(e){
     var client=e.target.closest("[data-open-client-messages]");
     if(client){e.preventDefault();openClientMessages(client.dataset.openClientMessages);return}
+    var draftButton=e.target.closest("[data-case-draft]");
+    if(draftButton){
+      e.preventDefault();
+      try{
+        draftButton.disabled=true;draftButton.textContent="Building draft…";
+        var result=await api("/dashboard/api/items/"+draftButton.dataset.caseDraft+"/draft-message",{method:"POST"});
+        toast(result.existing?"Draft already waiting in Hold Queue":"Draft created: "+(result.strategy&&result.strategy.label||"ready for review"));
+        await load();
+        switchView("hold");
+      }catch(err){toast(err.message);draftButton.disabled=false;draftButton.textContent="Draft Message"}
+      return;
+    }
     var j=e.target.closest("[data-jump]");if(j)switchView(j.dataset.jump)
   });
   document.getElementById("refresh").addEventListener("click",async function(){if(current==="messages"){if(selectedChat&&!messageSending)loadMessageContext();else if(!selectedChat)searchMessages()}else if(current==="calls"){await load();refreshCallsWorkspace()}else load()});
