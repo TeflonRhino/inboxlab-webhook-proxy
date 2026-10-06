@@ -45,6 +45,62 @@ let calendlyEventTypeCache: {
   event_types: Array<{ uri: string; name: string; duration: number | null; scheduling_url: string; kind: string | null }>;
 } | null = null;
 const CALENDLY_EVENT_TYPE_CACHE_MS = 5 * 60 * 1000;
+let fathomMeetingsCache: { at: number; items: any[] } | null = null;
+let fathomMeetingsInflight: Promise<any[]> | null = null;
+const FATHOM_MEETINGS_CACHE_MS = 10 * 60 * 1000;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchFathomMeetingArchive() {
+  const now = Date.now();
+  if (fathomMeetingsCache && now - fathomMeetingsCache.at < FATHOM_MEETINGS_CACHE_MS) {
+    return fathomMeetingsCache.items;
+  }
+  if (fathomMeetingsInflight) return fathomMeetingsInflight;
+  fathomMeetingsInflight = (async () => {
+    const end = new Date();
+    const start = new Date(end.getTime() - 430 * 24 * 60 * 60 * 1000);
+    const url = new URL("https://api.fathom.ai/external/v1/meetings");
+    url.searchParams.set("created_after", start.toISOString());
+    url.searchParams.set("created_before", end.toISOString());
+    url.searchParams.set("include_summary", "true");
+    url.searchParams.set("include_action_items", "true");
+    url.searchParams.set("limit", "100");
+    const raw: any[] = [];
+    let cursor: string | null = null;
+
+    for (let page = 0; page < 8; page++) {
+      if (cursor) url.searchParams.set("cursor", cursor); else url.searchParams.delete("cursor");
+      let response: Response | null = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        response = await fetch(url, {
+          headers: { "X-Api-Key": FATHOM_API_KEY!, Accept: "application/json" },
+          signal: AbortSignal.timeout(20000)
+        });
+        if (response.status !== 429) break;
+        const retryHeader = Number(response.headers.get("retry-after") || "0");
+        await sleep(retryHeader > 0 ? retryHeader * 1000 : 1800);
+      }
+      if (!response) throw new Error("Fathom lookup failed");
+      const body: any = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(`Fathom lookup failed ${response.status}`);
+      const items = Array.isArray(body?.items) ? body.items : [];
+      raw.push(...items);
+      cursor = body?.next_cursor || body?.nextCursor || body?.pagination?.next_cursor || null;
+      if (!cursor || !items.length) break;
+      await sleep(350);
+    }
+    fathomMeetingsCache = { at: Date.now(), items: raw };
+    return raw;
+  })();
+  try {
+    return await fathomMeetingsInflight;
+  } finally {
+    fathomMeetingsInflight = null;
+  }
+}
 
 async function ensureQueueTable() {
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -1363,28 +1419,7 @@ async function getClientHeartbeatContext(name: string, maxMessages = 120) {
 async function getClientFathomContext(name: string) {
   if (!FATHOM_API_KEY) return { available: false, meetings: [], error: "FATHOM_API_KEY is not configured" };
   try {
-    const end = new Date();
-    const start = new Date(end.getTime() - 430 * 24 * 60 * 60 * 1000);
-    const url = new URL("https://api.fathom.ai/external/v1/meetings");
-    url.searchParams.set("created_after", start.toISOString());
-    url.searchParams.set("created_before", end.toISOString());
-    url.searchParams.set("include_summary", "true");
-    url.searchParams.set("include_action_items", "true");
-    const raw: any[] = [];
-    let cursor: string | null = null;
-    for (let page = 0; page < 12; page++) {
-      if (cursor) url.searchParams.set("cursor", cursor); else url.searchParams.delete("cursor");
-      const r = await fetch(url, {
-        headers: { "X-Api-Key": FATHOM_API_KEY, Accept: "application/json" },
-        signal: AbortSignal.timeout(20000)
-      });
-      const body: any = await r.json().catch(() => null);
-      if (!r.ok) throw new Error(`Fathom lookup failed ${r.status}`);
-      const items = Array.isArray(body?.items) ? body.items : [];
-      raw.push(...items);
-      cursor = body?.next_cursor || body?.nextCursor || body?.pagination?.next_cursor || null;
-      if (!cursor || !items.length) break;
-    }
+    const raw = await fetchFathomMeetingArchive();
     const q = normalise(name);
     const meetings = raw.filter((m: any) => {
       const invitees = Array.isArray(m?.calendar_invitees) ? m.calendar_invitees : [];
