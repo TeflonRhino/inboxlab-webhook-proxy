@@ -836,6 +836,8 @@
       }
       function cleanAction(s){
         var t=String(s||"").replace(/\[([^\]]+)\]\([^\)]+\)/g,"$1").replace(/https?:\/\/\S+/g,"").replace(/[\n\r\t]+/g," ").replace(/\s+/g," ").trim();
+        // EOD is written in Dave's voice, so remove third-person assignee phrasing.
+        t=t.replace(/\s+for Dave\b/gi,"").replace(/\bDave to\s+/gi,"").replace(/\bDave should\s+/gi,"").replace(/\bDave will\s+/gi,"");
         return t.length>120?t.slice(0,117).replace(/[,:;\-\s]+$/,"")+"…":t;
       }
       function isClientMeeting(m){
@@ -962,7 +964,12 @@
         carry.slice(0,12).forEach(function(x){lines.push("• "+x)});
       }
 
-      draft.value=lines.join("\n");
+      var finalEod=lines.join("\n")
+        .replace(/\s+for Dave\b/gi,"")
+        .replace(/\bDave to\s+/gi,"")
+        .replace(/\bDave should\s+/gi,"")
+        .replace(/\bDave will\s+/gi,"");
+      draft.value=finalEod;
 
       var checks=[];
       checks.push('<div class="item-card"><div class="item-title">'+booked+' Calendly booking(s) found</div><div class="item-summary">'+likelyTaken+' taken · '+noShows+' marked no-show · '+possibleNoShows+' possible no-show · '+rescheduled+' rescheduled · '+canceled+' cancelled.</div></div>');
