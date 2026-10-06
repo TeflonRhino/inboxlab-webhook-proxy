@@ -1019,6 +1019,7 @@ app.get("/dashboard/api/eod/context", requireDashboardAuth, async (req, res) => 
               uri: i?.uri || null,
               name: i?.name || null,
               email: i?.email || null,
+              timezone: i?.timezone || null,
               status: i?.status || null,
               rescheduled: Boolean(i?.rescheduled),
               old_invitee: i?.old_invitee || null,
