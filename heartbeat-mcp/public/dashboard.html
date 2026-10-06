@@ -1087,12 +1087,14 @@
     try{
       b.disabled=true;
       if(act==="save"){var draft=card.querySelector("textarea").value.trim();if(!draft)throw new Error("Draft cannot be empty");await api("/dashboard/api/hold-queue/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({draft:draft})});toast("Draft saved — approval reset");}
-      if(act==="approve"){await api("/dashboard/api/hold-queue/"+id+"/approve",{method:"POST"});toast("Approved — still not sent");}
+      if(act==="approve"){var approveDraft=card.querySelector("textarea").value.trim();if(!approveDraft)throw new Error("Draft cannot be empty");await api("/dashboard/api/hold-queue/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({draft:approveDraft})});await api("/dashboard/api/hold-queue/"+id+"/approve",{method:"POST"});toast("Saved and approved — still not sent");}
       if(act==="approve_send"){
+        var sendDraft=card.querySelector("textarea").value.trim();if(!sendDraft)throw new Error("Draft cannot be empty");
         if(!confirm("Approve and send this exact draft to Heartbeat now?")){b.disabled=false;return}
+        await api("/dashboard/api/hold-queue/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({draft:sendDraft})});
         await api("/dashboard/api/hold-queue/"+id+"/approve",{method:"POST"});
         await api("/dashboard/api/hold-queue/"+id+"/post",{method:"POST"});
-        toast("Approved and posted to Heartbeat");
+        toast("Saved, approved and posted to Heartbeat");
       }
       if(act==="skip"){if(!confirm("Skip this draft? It will not be sent.")){b.disabled=false;return}await api("/dashboard/api/hold-queue/"+id+"/skip",{method:"POST"});toast("Draft skipped");}
       if(act==="post"){if(!confirm("Post this exact approved draft to Heartbeat now?")){b.disabled=false;return}await api("/dashboard/api/hold-queue/"+id+"/post",{method:"POST"});toast("Posted to Heartbeat");}
