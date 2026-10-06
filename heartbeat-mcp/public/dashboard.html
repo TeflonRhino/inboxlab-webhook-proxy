@@ -26,7 +26,7 @@
 .dot{width:7px;height:7px;border-radius:50%;background:#22c55e;display:inline-block}.section{margin-top:20px}.section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}.section-head h2{font-size:15px;margin:0}
 .pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:820;background:#f3f4f6;color:#4b5563}.pill.hold{background:var(--amberbg);color:var(--amber)}.pill.approved{background:var(--bluebg);color:var(--blue)}.pill.posted{background:var(--greenbg);color:var(--green)}.pill.skipped{background:#f3f4f6;color:#6b7280}
 .workspace{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);gap:12px}.panel{background:#fff;border:1px solid var(--line);border-radius:16px;padding:15px;min-width:0}
-.queue,.stack{display:grid;gap:9px}.queue-card,.item-card{border:1px solid var(--line);border-radius:14px;padding:13px;background:#fff}.qtop,.itop{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.client{font-size:14px;font-weight:820}.meta{font-size:11px;color:var(--muted);margin-top:3px}
+.queue,.stack{display:grid;gap:9px}.queue-card,.item-card{border:1px solid var(--line);border-radius:14px;padding:13px;background:#fff}.qtop,.itop{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.client{font-size:14px;font-weight:820}.meta{font-size:11px;color:var(--muted);margin-top:3px}.refund-client{display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:0;margin:0 0 5px;color:var(--ink);font:inherit;font-size:18px;font-weight:850;cursor:pointer;text-align:left}.refund-client:hover{text-decoration:underline}.refund-client:after{content:"→";font-size:13px;color:var(--muted)}.refund-title{font-size:12px;font-weight:700;color:var(--muted)}
 .preview{font-size:13px;line-height:1.5;margin-top:10px;color:#374151}.draft{width:100%;margin-top:10px;min-height:95px;resize:vertical;border:1px solid var(--line);background:var(--soft);border-radius:11px;padding:10px;line-height:1.45;color:var(--ink)}
 .draft:focus{outline:none;border-color:#94a3b8;box-shadow:0 0 0 3px rgba(148,163,184,.18)}.reason{font-size:11px;color:#6b7280;margin-top:7px}.channel-warning{margin-top:10px;border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:11px;padding:10px}.channel-warning b{display:block;font-size:12px;margin-bottom:5px}.channel-row{display:flex;gap:6px;margin-top:8px}.channel-input{flex:1;min-width:0;border:1px solid #fdba74;border-radius:9px;padding:8px 9px;background:#fff}.actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 .priority{font-size:9px;font-weight:850;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:4px 7px}.priority.URGENT{background:var(--redbg);color:var(--red)}.priority.HIGH{background:var(--amberbg);color:var(--amber)}.priority.NORMAL{background:var(--bluebg);color:var(--blue)}.priority.LOW{background:#f3f4f6;color:#6b7280}
@@ -305,7 +305,15 @@
   }
   function itemCard(x,showCategory){
     var isNoShow=x.category==="CALL"&&x.metadata&&x.metadata.possible_no_show;
-    return '<article class="item-card" data-item="'+x.id+'"><div class="itop"><div><div class="item-title">'+esc(x.title)+'</div><div class="meta">'+(x.client_name?esc(x.client_name)+' · ':'')+(showCategory?esc(labelCategory(x.category))+' · ':'')+esc(x.source||"ChatGPT")+'</div></div><span class="priority '+esc(x.priority)+'">'+esc(x.priority)+'</span></div>'+
+    var isRefund=x.category==="REFUND";
+    var heading=isRefund&&x.client_name
+      ? '<button class="refund-client" data-open-client-messages="'+esc(x.client_name)+'" title="Open '+esc(x.client_name)+' in Messages">'+esc(x.client_name)+'</button><div class="refund-title">'+esc(x.title)+'</div>'
+      : '<div class="item-title">'+esc(x.title)+'</div>';
+    var metaParts=[];
+    if(!isRefund&&x.client_name)metaParts.push(esc(x.client_name));
+    if(showCategory)metaParts.push(esc(labelCategory(x.category)));
+    metaParts.push(esc(x.source||"ChatGPT"));
+    return '<article class="item-card" data-item="'+x.id+'"><div class="itop"><div>'+heading+'<div class="meta">'+metaParts.join(' · ')+'</div></div><span class="priority '+esc(x.priority)+'">'+esc(x.priority)+'</span></div>'+
       (x.summary?'<div class="item-summary">'+esc(x.summary)+'</div>':'')+
       (isNoShow?'<div class="actions"><button class="btn red" data-noshow="'+x.id+'">Mark as No Show in Calendly</button></div>':'')+
       '<div class="item-foot"><span>'+(x.due_at?'Due '+fmt(x.due_at):'Updated '+fmt(x.updated_at))+'</span><div><button class="btn" data-iresolve="DONE" data-id="'+x.id+'">Done</button> <button class="btn" data-iresolve="DISMISSED" data-id="'+x.id+'">Dismiss</button></div></div></article>';
@@ -785,8 +793,41 @@
     function filterQueue(){var f=document.getElementById("queueFilter").value;var q=f?data.queue.filter(function(x){return x.status===f}):data.queue;document.getElementById("holdQueue").innerHTML=q.length?q.map(function(x){return qCard(x,false)}).join(""):empty("Nothing here","This queue is clear.");}
   async function load(){try{data=await api("/dashboard/api/overview");render()}catch(e){toast(e.message)}}
   function switchView(view){current=view;document.querySelectorAll("#nav button").forEach(function(b){b.classList.toggle("active",b.dataset.view===view)});document.querySelectorAll("main section[id^='view-']").forEach(function(s){s.classList.toggle("hidden",s.id!=="view-"+view)});document.getElementById("viewTitle").textContent=titles[view][0];document.getElementById("viewSub").textContent=titles[view][1];}
+  async function openClientMessages(name){
+    var search=document.getElementById("messageSearch");
+    switchView("messages");
+    search.value=name;
+    document.getElementById("messageResults").innerHTML=empty("Searching…","Finding "+name+" in Heartbeat.");
+    messageStatus("");
+    try{
+      var result=await api("/dashboard/api/messages/search?q="+encodeURIComponent(name));
+      messageMatches=result.matches||[];
+      if(!messageMatches.length){
+        selectedChat=null;renderMessageMatches();
+        document.getElementById("messageHistory").innerHTML=empty("No Heartbeat chat found","This client may not have a live Heartbeat chat yet.");
+        document.getElementById("messageClient").textContent="No client selected";
+        document.getElementById("messageChannel").textContent="Search for a client to load their Heartbeat conversation.";
+        return;
+      }
+      var target=normaliseEod(name);
+      var chat=messageMatches.find(function(ch){return normaliseEod(ch.name)===target})||messageMatches[0];
+      if(selectedChat)messageDrafts[selectedChat.id]=messageDraft.value;
+      selectedChat=chat;messageDraft.value=messageDrafts[chat.id]||"";
+      document.getElementById("messageClient").textContent=chat.name||"Unnamed chat";
+      document.getElementById("messageChannel").textContent="Heartbeat chat · "+chat.id;
+      renderMessageMatches();
+      await loadMessageContext();
+    }catch(e){
+      document.getElementById("messageResults").innerHTML=empty("Could not open messages",e.message);
+      messageStatus(e.message,true);
+    }
+  }
   document.getElementById("nav").addEventListener("click",function(e){var b=e.target.closest("button[data-view]");if(b)switchView(b.dataset.view)});
-  document.body.addEventListener("click",function(e){var j=e.target.closest("[data-jump]");if(j)switchView(j.dataset.jump)});
+  document.body.addEventListener("click",function(e){
+    var client=e.target.closest("[data-open-client-messages]");
+    if(client){e.preventDefault();openClientMessages(client.dataset.openClientMessages);return}
+    var j=e.target.closest("[data-jump]");if(j)switchView(j.dataset.jump)
+  });
   document.getElementById("refresh").addEventListener("click",function(){if(current==="messages"){if(selectedChat&&!messageSending)loadMessageContext();else if(!selectedChat)searchMessages()}else load()});
   document.getElementById("queueFilter").addEventListener("change",filterQueue);
   var eodDate=document.getElementById("eodDate");
