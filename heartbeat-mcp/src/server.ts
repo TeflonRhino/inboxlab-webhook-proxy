@@ -1688,6 +1688,29 @@ app.get("/dashboard/api/client-intelligence", requireDashboardAuth, async (req, 
 });
 
 
+async function getSlackClientContext(name: string) {
+  const channels=[{id:"C0C4HUR7PH8",name:"student-payments"},{id:"C0C60UP1B54",name:"refund-requests"}];
+  if(!SLACK_BOT_TOKEN)return {available:false,channels:[],messages:[],error:"SLACK_BOT_TOKEN is not configured"};
+  const words=normalise(name).split(" ").filter((x:string)=>x.length>1);
+  const all:any[]=[];
+  let lastError:string|null=null;
+  for(const channel of channels){
+    try{
+      const url=new URL("https://slack.com/api/conversations.history");
+      url.searchParams.set("channel",channel.id);url.searchParams.set("limit","200");
+      const r=await fetch(url,{headers:{Authorization:`Bearer ${SLACK_BOT_TOKEN}`},signal:AbortSignal.timeout(12000)});
+      const body:any=await r.json().catch(()=>null);
+      if(!r.ok||!body?.ok)throw new Error(body?.error||("HTTP "+r.status));
+      const matches=(Array.isArray(body.messages)?body.messages:[]).filter((m:any)=>{
+        const t=normalise(String(m?.text||""));return words.length>0&&words.every((w:string)=>t.includes(w));
+      }).slice(0,20).map((m:any)=>({channel:channel.name,channel_id:channel.id,timestamp:m.ts||null,text:String(m.text||""),thread_ts:m.thread_ts||null,user:m.user||m.bot_id||null}));
+      all.push(...matches);
+    }catch(err){lastError=err instanceof Error?err.message:"Slack lookup failed";}
+  }
+  all.sort((a,b)=>Number(b.timestamp||0)-Number(a.timestamp||0));
+  return {available:all.length>0||!lastError,channels,messages:all.slice(0,30),error:lastError};
+}
+
 async function getCollectionContext(item: any) {
   const name = String(item?.client_name || "").trim();
   let airtable: any = null;
@@ -1734,21 +1757,26 @@ async function getCollectionContext(item: any) {
     } catch(err){ fathom={available:false,meetings:[],error:err instanceof Error?err.message:"Fathom lookup failed"}; }
   } else fathom.error="FATHOM_API_KEY is not configured";
 
+  const slack=await getSlackClientContext(name).catch((err)=>({available:false,channels:[],messages:[],error:err instanceof Error?err.message:"Slack lookup failed"}));
+
   const paymentPattern=/pay|payment|balance|invoice|installment|instalment|card|declin|past due|overdue|owe|outstanding|plan|finance|clarity|charge/i;
   const planPattern=/agreed|plan|promise|promised|will pay|pay on|payment date|installment|instalment|split|pause|extension|by friday|by monday|next week|next month/i;
   const relevantHeartbeat=(heartbeat.messages||[]).filter((m:any)=>paymentPattern.test(String(m?.text||""))).slice(0,20);
   const relevantMeetings=(fathom.meetings||[]).filter((m:any)=>paymentPattern.test(String(m?.summary||"")+" "+JSON.stringify(m?.action_items||[])));
+  const relevantSlack=(slack.messages||[]).filter((m:any)=>paymentPattern.test(String(m?.text||""))||m.channel==="refund-requests");
   const plans=[
     ...relevantHeartbeat.filter((m:any)=>planPattern.test(String(m?.text||""))).map((m:any)=>({source:"Heartbeat",date:m.timestamp||null,text:m.text})),
-    ...relevantMeetings.flatMap((m:any)=>(m.action_items||[]).filter((a:any)=>planPattern.test(String(a?.description||""))).map((a:any)=>({source:"Fathom",date:m.created_at||null,text:a.description})))
-  ].slice(0,10);
+    ...relevantMeetings.flatMap((m:any)=>(m.action_items||[]).filter((a:any)=>planPattern.test(String(a?.description||""))).map((a:any)=>({source:"Fathom",date:m.created_at||null,text:a.description}))),
+    ...relevantSlack.filter((m:any)=>planPattern.test(String(m?.text||""))).map((m:any)=>({source:"Slack #"+m.channel,date:m.timestamp||null,text:m.text}))
+  ].slice(0,15);
   return {
     item:{id:item.id,client_name:item.client_name,title:item.title,summary:item.summary,priority:item.priority,source:item.source,metadata:item.metadata||{}},
     airtable,
-    signals:{payment_discussed:relevantHeartbeat.length>0||relevantMeetings.length>0,plans_found:plans.length>0},
+    signals:{payment_discussed:relevantHeartbeat.length>0||relevantMeetings.length>0||relevantSlack.length>0,plans_found:plans.length>0},
     plans,
     heartbeat:{...heartbeat,relevant_messages:relevantHeartbeat},
-    fathom:{...fathom,relevant_meetings:relevantMeetings}
+    fathom:{...fathom,relevant_meetings:relevantMeetings},
+    slack:{...slack,relevant_messages:relevantSlack}
   };
 }
 
@@ -1801,6 +1829,7 @@ app.post("/dashboard/api/items/:id/draft-message", requireDashboardAuth, async (
           ...(ctx.airtable ? [{text:"Airtable operational notes: "+String(ctx.airtable.notes||"")},{text:"Viktor payment notes: "+String(ctx.airtable.payment_notes||"")}] : []),
           ...(ctx.heartbeat?.relevant_messages || []).map((m:any)=>({text:m.text})),
           ...(ctx.fathom?.relevant_meetings || []).map((m:any)=>({text:[m.summary,...(m.action_items||[]).map((a:any)=>a.description)].filter(Boolean).join(" ")})),
+          ...(ctx.slack?.relevant_messages || []).map((m:any)=>({text:"Slack #"+m.channel+": "+String(m.text||"")})),
           ...(ctx.plans || []).map((p:any)=>({text:"Agreed plan: "+p.text}))
         ];
       } else {
