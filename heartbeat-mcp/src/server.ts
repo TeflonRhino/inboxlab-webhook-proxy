@@ -269,9 +269,7 @@ async function sendHeartbeatMessage(channelID: string, text: string) {
   }
 }
 function regexEscape(value: string) {
-  return value.replace(/[.*+?^${}()|[]\\]/g, "\\function regexEscape(value: string) {
-  return value.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\async function queueReply(clientName: string, draft: string, reason?: string) {");
-}");
+  return value.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\$&");
 }
 
 async function addClientMentionToDraft(clientName: string, draft: string) {
