@@ -26,7 +26,7 @@
 .dot{width:7px;height:7px;border-radius:50%;background:#22c55e;display:inline-block}.section{margin-top:20px}.section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}.section-head h2{font-size:15px;margin:0}
 .pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:820;background:#f3f4f6;color:#4b5563}.pill.hold{background:var(--amberbg);color:var(--amber)}.pill.approved{background:var(--bluebg);color:var(--blue)}.pill.posted{background:var(--greenbg);color:var(--green)}.pill.skipped{background:#f3f4f6;color:#6b7280}
 .workspace{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);gap:12px}.panel{background:#fff;border:1px solid var(--line);border-radius:16px;padding:15px;min-width:0}
-.queue,.stack{display:grid;gap:9px}.queue-card,.item-card{border:1px solid var(--line);border-radius:14px;padding:13px;background:#fff}.qtop,.itop{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.client{font-size:14px;font-weight:820}.meta{font-size:11px;color:var(--muted);margin-top:3px}.refund-client{display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:0;margin:0 0 5px;color:var(--ink);font:inherit;font-size:18px;font-weight:850;cursor:pointer;text-align:left}.refund-client:hover{text-decoration:underline}.refund-client:after{content:"→";font-size:13px;color:var(--muted)}.refund-title{font-size:12px;font-weight:700;color:var(--muted)}
+.queue,.stack{display:grid;gap:9px}.queue-card,.item-card{border:1px solid var(--line);border-radius:14px;padding:13px;background:#fff}.qtop,.itop{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.client{font-size:14px;font-weight:820}.meta{font-size:11px;color:var(--muted);margin-top:3px}.refund-client,.collection-client{display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:0;margin:0 0 5px;color:var(--ink);font:inherit;font-size:18px;font-weight:850;cursor:pointer;text-align:left}.refund-client:hover,.collection-client:hover{text-decoration:underline}.refund-client:after,.collection-client:after{content:"→";font-size:13px;color:var(--muted)}.refund-title,.collection-title{font-size:12px;font-weight:700;color:var(--muted)}
 .preview{font-size:13px;line-height:1.5;margin-top:10px;color:#374151}.draft{width:100%;margin-top:10px;min-height:95px;resize:vertical;border:1px solid var(--line);background:var(--soft);border-radius:11px;padding:10px;line-height:1.45;color:var(--ink)}
 .draft:focus{outline:none;border-color:#94a3b8;box-shadow:0 0 0 3px rgba(148,163,184,.18)}.reason{font-size:11px;color:#6b7280;margin-top:7px}.channel-warning{margin-top:10px;border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:11px;padding:10px}.channel-warning b{display:block;font-size:12px;margin-bottom:5px}.channel-row{display:flex;gap:6px;margin-top:8px}.channel-input{flex:1;min-width:0;border:1px solid #fdba74;border-radius:9px;padding:8px 9px;background:#fff}.actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 .priority{font-size:9px;font-weight:850;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:4px 7px}.priority.URGENT{background:var(--redbg);color:var(--red)}.priority.HIGH{background:var(--amberbg);color:var(--amber)}.priority.NORMAL{background:var(--bluebg);color:var(--blue)}.priority.LOW{background:#f3f4f6;color:#6b7280}
@@ -306,11 +306,12 @@
   function itemCard(x,showCategory){
     var isNoShow=x.category==="CALL"&&x.metadata&&x.metadata.possible_no_show;
     var isRefund=x.category==="REFUND";
-    var heading=isRefund&&x.client_name
-      ? '<button class="refund-client" data-open-client-messages="'+esc(x.client_name)+'" title="Open '+esc(x.client_name)+' in Messages">'+esc(x.client_name)+'</button><div class="refund-title">'+esc(x.title)+'</div>'
+    var isCollection=x.category==="COLLECTION";
+    var heading=(isRefund||isCollection)&&x.client_name
+      ? '<button class="'+(isRefund?'refund-client':'collection-client')+'" data-open-client-messages="'+esc(x.client_name)+'" title="Open '+esc(x.client_name)+' in Messages">'+esc(x.client_name)+'</button><div class="'+(isRefund?'refund-title':'collection-title')+'">'+esc(x.title)+'</div>'
       : '<div class="item-title">'+esc(x.title)+'</div>';
     var metaParts=[];
-    if(!isRefund&&x.client_name)metaParts.push(esc(x.client_name));
+    if(!isRefund&&!isCollection&&x.client_name)metaParts.push(esc(x.client_name));
     if(showCategory)metaParts.push(esc(labelCategory(x.category)));
     metaParts.push(esc(x.source||"ChatGPT"));
     return '<article class="item-card" data-item="'+x.id+'"><div class="itop"><div>'+heading+'<div class="meta">'+metaParts.join(' · ')+'</div></div><span class="priority '+esc(x.priority)+'">'+esc(x.priority)+'</span></div>'+
