@@ -269,7 +269,9 @@ async function sendHeartbeatMessage(channelID: string, text: string) {
   }
 }
 function regexEscape(value: string) {
+  return value.replace(/[.*+?^${}()|[]\\]/g, "\\function regexEscape(value: string) {
   return value.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\async function queueReply(clientName: string, draft: string, reason?: string) {");
+}");
 }
 
 async function addClientMentionToDraft(clientName: string, draft: string) {
@@ -336,6 +338,130 @@ async function queuePendingHeartbeatReply(clientName: string, draft: string, rea
   const item = result.rows[0];
   await logActivity({ eventType: "hold_created_pending_channel", title: "Heartbeat draft waiting for chat", detail: taggedDraft, clientName, entityType: "hold_queue", entityId: item.id, actor: "ChatGPT" });
   return item;
+}
+
+
+type CaseDraftStrategy = {
+  key: string;
+  label: string;
+  objective: string;
+  draft: string;
+};
+
+function firstName(value: string) {
+  return String(value || "").trim().split(/\s+/)[0] || "there";
+}
+
+function recentHeartbeatText(messages: Array<{ text?: string }>) {
+  return messages.slice(0, 12).map((m) => String(m?.text || "")).join("\n ").toLowerCase();
+}
+
+function buildCaseDraftStrategy(item: any, recentMessages: Array<{ text?: string }> = []): CaseDraftStrategy {
+  const name = String(item?.client_name || "there").trim();
+  const first = firstName(name);
+  const context = [
+    item?.title || "",
+    item?.summary || "",
+    item?.source || "",
+    recentHeartbeatText(recentMessages)
+  ].join("\n").toLowerCase();
+
+  if (item?.category === "COLLECTION") {
+    if (/frustrat|delay|screwed|support issue|blocker|waiting on|promised|problem with|issue with|not working/.test(context)) {
+      return {
+        key: "support_first",
+        label: "Resolve support issue first",
+        objective: "Protect trust before raising the outstanding balance.",
+        draft: `Hey ${first}, I wanted to check in on the support side first because I know there has been some frustration around getting things moving. I want to make sure we have that properly sorted before anything else. Once that is moving, there is also an outstanding payment item I need to tidy up with you, but I would rather make sure the delivery side is where it needs to be first. Can you let me know where things currently stand?`
+      };
+    }
+    if (/financial pressure|money problem|money problems|tight on money|lost (his|her|their|my) job|can't afford|cannot afford|mortgage|financial constraint|financial hardship|things are tight/.test(context)) {
+      return {
+        key: "financial_pressure",
+        label: "Financial pressure conversation",
+        objective: "Open a low-pressure conversation before asking for payment.",
+        draft: `Hey ${first}, I know you mentioned things are a bit tight financially at the moment, so I did not want to just send you a generic payment chase. There is an outstanding balance on the account and I wanted to check in with you directly first. Where are things at on your side at the moment, and what feels realistic?`
+      };
+    }
+    if (/declin|blocked|security|failed charge|payment failed|bank restriction|new card|insufficient funds|too many failed/.test(context)) {
+      return {
+        key: "payment_method_issue",
+        label: "Payment method issue",
+        objective: "Get a clear payment-method fix without making the message confrontational.",
+        draft: `Hey ${first}, quick one. It looks like the latest payment is still not going through. From what I can see it may be a card or bank issue rather than anything you need to do in the program. Could you take a look when you get a chance? If the bank is blocking it, another card or checking with the bank is usually the quickest fix. If you need the payment link from me, just say and I will get it over to you.`
+      };
+    }
+    if (/positive repl|traction|wins posted|going well|campaign.*active|campaign.*running|book.*call|new interested|progress|scaling/.test(context)) {
+      return {
+        key: "active_momentum",
+        label: "Active client with momentum",
+        objective: "Use current progress as a natural point to tidy up the balance.",
+        draft: `Hey ${first}, good to see things are moving on the campaign side. One thing I wanted to tidy up alongside that is the outstanding payment on the account. Could you take a look at that for me today? If there is anything getting in the way of it going through, let me know and I can help get it sorted.`
+      };
+    }
+    return {
+      key: "standard_collection",
+      label: "Straightforward payment follow-up",
+      objective: "Flag the missed payment clearly and give an easy next step.",
+      draft: `Hey ${first}, just wanted to flag that it looks like the latest payment on the account did not go through. Could you take a quick look when you get a chance? If you have changed cards or need the payment link again, let me know and I will help get it sorted.`
+    };
+  }
+
+  if (/quoted|price|pricing|chargeback|dispute|claritypay|financ|loan|cancel.*payment plan|remaining loan/.test(context)) {
+    return {
+      key: "high_risk_payment_dispute",
+      label: "Pricing / financing / dispute",
+      objective: "Clarify facts before making any refund or payment commitment.",
+      draft: `Hey ${first}, I want to make sure I understand this properly before I give you an answer or make any assumptions. From what I can see there is a payment or financing piece tied into the request, so I want to get the facts straight first. Can you tell me, in your own words, what you understood the payment arrangement to be and what outcome you are asking us for now? Once I have that, I can look at the account properly and come back to you clearly.`
+    };
+  }
+  if (/financial pressure|financial hardship|tight on money|lost (his|her|their|my) job|mortgage|parents|bank account|financial constraint|cannot continue|can't continue/.test(context)) {
+    return {
+      key: "refund_financial_hardship",
+      label: "Refund request from financial pressure",
+      objective: "Understand whether they need a refund, payment relief, or a pause before discussing policy.",
+      draft: `Hey ${first}, thanks for being open about what is going on. Before I make any assumptions about the refund side, I want to understand what would actually help most right now. Are you looking specifically for a full refund, to stop or pause future payments, or mainly to reduce the financial pressure for a while? If you tell me the outcome you are hoping for, I can look at the account from there.`
+    };
+  }
+  if (/guarantee|six full months|6 full months|qualifying activity|roi guarantee|verify.*activity|required step/.test(context)) {
+    return {
+      key: "guarantee_review",
+      label: "Guarantee eligibility review",
+      objective: "Gather and verify evidence before giving a decision.",
+      draft: `Hey ${first}, I am going to look at this properly against the guarantee criteria before I give you a definitive answer. I want to make sure we are being fair and looking at the full picture rather than guessing. I am checking the activity, implementation and support history now. If there is anything you think is important for me to include when I review it, send it over here and I will factor it in.`
+    };
+  }
+  if (/no client|no clients|no result|no results|not work|didn't work|did not work|too risky|results|dissatisf|not getting/.test(context)) {
+    return {
+      key: "results_dissatisfaction",
+      label: "Results / delivery dissatisfaction",
+      objective: "Understand the gap between expected and actual results before deciding on the refund.",
+      draft: `Hey ${first}, I want to look at this properly rather than just throwing policy at you. Can you tell me what you feel has not worked and where you think the biggest gap has been between what you expected and what has happened so far? I am going to compare that with the activity and support history on our side as well so we can have a proper conversation about it.`
+    };
+  }
+  if (/resolved|already visible|already refunded|exchange appears resolved|no further action|cancelled.*monthly plan/.test(context)) {
+    return {
+      key: "close_the_loop",
+      label: "Confirm resolution",
+      objective: "Close the loop without reopening an issue that may already be solved.",
+      draft: `Hey ${first}, just wanted to close the loop on this and make sure we are all squared away. From what I can see the immediate issue looks to have been resolved. Can you confirm everything looks right on your side now? If so, I will mark it as sorted here as well.`
+    };
+  }
+  if (/panic|stress|threat|urgent|upset|angry|frustrat/.test(context)) {
+    return {
+      key: "deescalate_first",
+      label: "De-escalate first",
+      objective: "Lower emotion and understand the immediate pressure before discussing policy.",
+      draft: `Hey ${first}, I can see this is causing some stress and I do not want to rush into giving you a generic answer. I want to understand what is putting the most pressure on you right now and what you are hoping we can resolve first. Talk me through that and I will take it from there with you.`
+    };
+  }
+
+  return {
+    key: "refund_clarify_request",
+    label: "Clarify refund request",
+    objective: "Understand what changed and what outcome they want before giving a decision.",
+    draft: `Hey ${first}, thanks for flagging this. I want to understand the situation properly before I give you a definitive answer. Can you tell me what has changed for you and what outcome you are hoping for from the refund request? Once I have that context, I can look at the account properly and come back to you clearly.`
+  };
 }
 
 function extractHeartbeatChannelId(value: string): string | null {
@@ -1153,6 +1279,80 @@ app.post("/dashboard/api/eod/send", requireDashboardAuth, async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to send EOD to Slack" });
+  }
+});
+
+
+app.post("/dashboard/api/items/:id/draft-message", requireDashboardAuth, async (req, res) => {
+  try {
+    await ensureOpsTables();
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Valid dashboard item ID is required" });
+
+    const found = await pool!.query(
+      `SELECT * FROM dashboard_items WHERE id=$1 AND status='OPEN'`,
+      [id]
+    );
+    if (!found.rowCount) return res.status(404).json({ error: "Dashboard item not found" });
+
+    const item = found.rows[0];
+    if (!["COLLECTION", "REFUND"].includes(String(item.category))) {
+      return res.status(400).json({ error: "Draft Message is only available for Collections and Refunds" });
+    }
+    if (!item.client_name) return res.status(409).json({ error: "This item is missing a client name" });
+
+    const reasonPrefix = `CASE_DRAFT:${id}:`;
+    const existing = await pool!.query(
+      `SELECT * FROM heartbeat_hold_queue
+       WHERE reason LIKE $1 AND status IN ('HOLD','APPROVED')
+       ORDER BY created_at DESC LIMIT 1`,
+      [reasonPrefix + "%"]
+    );
+    if (existing.rowCount) {
+      const existingItem = existing.rows[0];
+      const strategyKey = String(existingItem.reason || "").split(":")[2] || "existing";
+      return res.json({ created: false, existing: true, item: existingItem, strategy: { key: strategyKey, label: "Existing draft already waiting" } });
+    }
+
+    let compact: Array<{ text?: string }> = [];
+    try {
+      const matches = await findChatChannels(String(item.client_name));
+      if (matches.length === 1) {
+        const messages = await getChatHistory(matches[0].id, 30);
+        compact = await compactMessages(messages);
+      }
+    } catch {
+      // Item summary still provides enough context for a safe starting draft.
+    }
+
+    const strategy = buildCaseDraftStrategy(item, compact);
+    const reason = `${reasonPrefix}${strategy.key} | ${strategy.label} | Objective: ${strategy.objective}`;
+
+    let queued;
+    try {
+      queued = await queueReply(String(item.client_name), strategy.draft, reason);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      if (/No matching Heartbeat CHAT channel found/i.test(message)) {
+        queued = await queuePendingHeartbeatReply(String(item.client_name), strategy.draft, reason);
+      } else {
+        throw err;
+      }
+    }
+
+    await logActivity({
+      eventType: "case_message_drafted",
+      title: `${item.category === "COLLECTION" ? "Collection" : "Refund"} message drafted: ${strategy.label}`,
+      detail: strategy.objective,
+      clientName: item.client_name,
+      entityType: "dashboard_item",
+      entityId: item.id,
+      actor: "Dave"
+    });
+
+    res.json({ created: true, item: queued, strategy });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to create case draft" });
   }
 });
 
