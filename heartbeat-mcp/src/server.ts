@@ -268,32 +268,73 @@ async function sendHeartbeatMessage(channelID: string, text: string) {
     throw new Error(`Heartbeat send failed ${response.status}: ${body}`);
   }
 }
+function regexEscape(value: string) {
+  return value.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\async function queueReply(clientName: string, draft: string, reason?: string) {");
+}
+
+async function addClientMentionToDraft(clientName: string, draft: string) {
+  const cleanName = String(clientName || "").trim();
+  const cleanDraft = String(draft || "").trim();
+  if (!cleanName || !cleanDraft) return cleanDraft;
+
+  let mentionName = cleanName;
+  try {
+    const users = await listHeartbeatUsers();
+    const target = normalise(cleanName);
+    const matches = users
+      .filter((u) => {
+        const n = normalise(u.name || "");
+        return n && (n === target || n.startsWith(target) || target.startsWith(n));
+      })
+      .sort((a, b) => String(b.name || "").length - String(a.name || "").length);
+    if (matches[0]?.name) mentionName = matches[0].name;
+  } catch {
+    // Keep the client name fallback; send-time formatting will only create a native
+    // Heartbeat mention when the resolved name matches a real Heartbeat user.
+  }
+
+  if (cleanDraft.includes("@" + mentionName)) return cleanDraft;
+
+  const firstName = mentionName.split(/\s+/)[0];
+  const candidates = [mentionName, firstName].filter(Boolean);
+  for (const candidate of candidates) {
+    const re = new RegExp("(^|[^@A-Za-z0-9_])(" + regexEscape(candidate) + ")(?=[^A-Za-z0-9_]|$)", "i");
+    if (re.test(cleanDraft)) {
+      return cleanDraft.replace(re, (_match, prefix) => prefix + "@" + mentionName);
+    }
+  }
+
+  return cleanDraft;
+}
+
 async function queueReply(clientName: string, draft: string, reason?: string) {
   await ensureQueueTable();
   const matches = await findChatChannels(clientName);
   if (matches.length === 0) throw new Error("No matching Heartbeat CHAT channel found");
   if (matches.length > 1) throw new Error("Client name is ambiguous; use a more specific name");
   const channel = matches[0];
+  const taggedDraft = await addClientMentionToDraft(channel.name, draft);
   const result = await pool!.query(
     `INSERT INTO heartbeat_hold_queue (client_name, channel_id, draft, reason)
      VALUES ($1,$2,$3,$4)
      RETURNING *`,
-    [channel.name, channel.id, draft, reason || null]
+    [channel.name, channel.id, taggedDraft, reason || null]
   );
   const item = result.rows[0];
-  await logActivity({ eventType: "hold_created", title: "Heartbeat draft added to Hold Queue", detail: draft, clientName: channel.name, entityType: "hold_queue", entityId: item.id, actor: "ChatGPT" });
+  await logActivity({ eventType: "hold_created", title: "Heartbeat draft added to Hold Queue", detail: taggedDraft, clientName: channel.name, entityType: "hold_queue", entityId: item.id, actor: "ChatGPT" });
   return item;
 }
 
 async function queuePendingHeartbeatReply(clientName: string, draft: string, reason?: string) {
   await ensureQueueTable();
+  const taggedDraft = await addClientMentionToDraft(clientName, draft);
   const result = await pool!.query(
     `INSERT INTO heartbeat_hold_queue (client_name, channel_id, channel_url, draft, reason, status)
      VALUES ($1,NULL,NULL,$2,$3,'HOLD') RETURNING *`,
-    [clientName, draft, reason || null]
+    [clientName, taggedDraft, reason || null]
   );
   const item = result.rows[0];
-  await logActivity({ eventType: "hold_created_pending_channel", title: "Heartbeat draft waiting for chat", detail: draft, clientName, entityType: "hold_queue", entityId: item.id, actor: "ChatGPT" });
+  await logActivity({ eventType: "hold_created_pending_channel", title: "Heartbeat draft waiting for chat", detail: taggedDraft, clientName, entityType: "hold_queue", entityId: item.id, actor: "ChatGPT" });
   return item;
 }
 
