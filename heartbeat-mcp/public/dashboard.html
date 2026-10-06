@@ -1015,7 +1015,7 @@
       var action=status==="possible_no_show"
         ? '<button class="btn red" data-call-noshow="1" data-client="'+esc(name)+'" data-title="'+esc(x.event.name||"Calendly call")+'" data-start="'+esc(x.event.start_time||"")+'" data-event="'+esc(x.event.uri||"")+'" data-invitee="'+esc(x.invitee.uri||"")+'">Mark No Show</button>'
         : "";
-      return '<article class="item-card call-card"><div class="call-main"><div><button class="call-client" data-client-brief="'+esc(name)+'">'+esc(name)+'</button><div class="call-time">'+esc(x.event.name||"Calendly call")+'</div><div class="call-detail">'+esc(detail)+'</div></div><div class="call-badges"><span class="call-badge '+statusCls+'">'+esc(label)+'</span><span class="call-badge '+rem.cls+'">'+esc(rem.label)+'</span></div></div><div class="call-actions"><button class="btn primary" data-client-brief="'+esc(name)+'">Client Brief</button><button class="btn" data-open-client-messages="'+esc(name)+'">Open Messages</button>'+action+'</div></article>';
+      return '<article class="item-card call-card"><div class="call-main"><div><button class="call-client" data-client-brief="'+esc(name)+'">'+esc(name)+'</button><div class="call-time">'+esc(x.event.name||"Calendly call")+'</div><div class="call-detail">'+esc(detail)+'</div></div><div class="call-badges"><span class="call-badge '+statusCls+'">'+esc(label)+'</span><span class="call-badge '+rem.cls+'">'+esc(rem.label)+'</span></div></div><div class="call-actions"><button class="btn primary" data-client-brief="'+esc(name)+'" data-call-title="'+esc(x.event.name||"Calendly call")+'" data-call-start="'+esc(x.event.start_time||"")+'" data-call-timezone="'+esc(tz||"Europe/London")+'">Client Brief</button><button class="btn" data-open-client-messages="'+esc(name)+'">Open Messages</button>'+action+'</div></article>';
     }).join("");
   }
   async function refreshCallsWorkspace(){
@@ -1084,7 +1084,7 @@
   function sourceEntry(meta,text,url){
     return '<div class="context-entry"><div class="meta">'+esc(meta||"")+'</div><div>'+esc(text||"")+'</div>'+(url?'<a class="source-link" href="'+esc(url)+'" target="_blank" rel="noopener">Open source ↗</a>':'')+'</div>';
   }
-  async function openClientBrief(name,itemId,category){
+  async function openClientBrief(name,itemId,category,callMeta){
     collectionContext.classList.add("open");collectionContext.setAttribute("aria-hidden","false");
     document.getElementById("contextName").textContent=name||"Client brief";
     document.getElementById("contextStatus").textContent="Checking Airtable/Viktor, Heartbeat, Fathom and Calendly…";
@@ -1127,6 +1127,7 @@
       var existing=itemId?(data.queue||[]).find(function(q){return (q.status==="HOLD"||q.status==="APPROVED")&&String(q.reason||"").indexOf("CASE_DRAFT:"+itemId+":")===0}):null;
       html+='<div class="actions">'+
         (itemId&&(category==="COLLECTION"||category==="REFUND")?(existing?'<button class="btn primary" data-review-existing-draft="'+existing.id+'">Review existing draft in Messages</button>':'<button class="btn primary" data-case-draft="'+itemId+'" data-context-draft="1">Create draft from this brief</button>'):'')+
+        (callMeta&&callMeta.start?'<button class="btn primary" data-call-reminder-draft="1" data-client="'+esc(ctx.client_name||name||"")+'" data-title="'+esc(callMeta.title||"Client call")+'" data-start="'+esc(callMeta.start)+'" data-timezone="'+esc(callMeta.timezone||"Europe/London")+'">Draft Reminder</button>':'')+
         '<button class="btn" data-open-client-messages="'+esc(ctx.client_name||name||"")+'">Open Heartbeat chat</button></div>';
       document.getElementById("contextBody").innerHTML=html;
     }catch(err){document.getElementById("contextStatus").textContent="Could not load client brief";document.getElementById("contextBody").innerHTML=empty("Brief unavailable",err.message)}
@@ -1142,7 +1143,9 @@
       messageStatus("Collection context checked. Draft loaded for final review — add @mentions or URLs if needed, then use Review & Send.");
       return;
     }
-    var brief=e.target.closest("[data-client-brief]");if(brief){e.preventDefault();openClientBrief(brief.dataset.clientBrief,brief.dataset.clientItem||"",brief.dataset.clientCategory||"");return}
+    var reminder=e.target.closest("[data-call-reminder-draft]");
+    if(reminder){e.preventDefault();try{reminder.disabled=true;reminder.textContent="Drafting…";var rr=await api("/dashboard/api/calls/reminder-draft",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client_name:reminder.dataset.client,call_title:reminder.dataset.title,call_start_time:reminder.dataset.start,timezone:reminder.dataset.timezone})});closeCollectionContext();await load();await openClientMessages(rr.item.client_name,rr.item.draft||"");messageStatus("Call reminder drafted using the booking and client context. Review it here, then use Review & Send.");toast(rr.existing?"Existing reminder draft loaded":"Reminder draft ready for review")}catch(err){toast(err.message);reminder.disabled=false;reminder.textContent="Draft Reminder"}return}
+    var brief=e.target.closest("[data-client-brief]");if(brief){e.preventDefault();openClientBrief(brief.dataset.clientBrief,brief.dataset.clientItem||"",brief.dataset.clientCategory||"",brief.dataset.callStart?{title:brief.dataset.callTitle,start:brief.dataset.callStart,timezone:brief.dataset.callTimezone}:null);return}
     var client=e.target.closest("[data-open-client-messages]");
     if(client){e.preventDefault();openClientMessages(client.dataset.openClientMessages);return}
     var draftButton=e.target.closest("[data-case-draft]");
