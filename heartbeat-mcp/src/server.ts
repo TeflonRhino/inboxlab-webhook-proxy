@@ -1370,14 +1370,22 @@ async function getClientFathomContext(name: string) {
     url.searchParams.set("created_before", end.toISOString());
     url.searchParams.set("include_summary", "true");
     url.searchParams.set("include_action_items", "true");
-    const r = await fetch(url, {
-      headers: { "X-Api-Key": FATHOM_API_KEY, Accept: "application/json" },
-      signal: AbortSignal.timeout(20000)
-    });
-    const body: any = await r.json().catch(() => null);
-    if (!r.ok) throw new Error(`Fathom lookup failed ${r.status}`);
+    const raw: any[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 12; page++) {
+      if (cursor) url.searchParams.set("cursor", cursor); else url.searchParams.delete("cursor");
+      const r = await fetch(url, {
+        headers: { "X-Api-Key": FATHOM_API_KEY, Accept: "application/json" },
+        signal: AbortSignal.timeout(20000)
+      });
+      const body: any = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(`Fathom lookup failed ${r.status}`);
+      const items = Array.isArray(body?.items) ? body.items : [];
+      raw.push(...items);
+      cursor = body?.next_cursor || body?.nextCursor || body?.pagination?.next_cursor || null;
+      if (!cursor || !items.length) break;
+    }
     const q = normalise(name);
-    const raw = Array.isArray(body?.items) ? body.items : [];
     const meetings = raw.filter((m: any) => {
       const invitees = Array.isArray(m?.calendar_invitees) ? m.calendar_invitees : [];
       const title = normalise(String(m?.title || m?.meeting_title || ""));
@@ -1485,19 +1493,31 @@ function inferClientStage(meetings: any[], heartbeatMessages: any[]) {
     ...heartbeatMessages.slice(0, 40).map((m) => String(m.text || ""))
   ].join(" ");
   if (/post.?launch|campaign review/i.test(combined)) return "Post-launch";
-  if (/campaign (?:is )?live|launched|launch date|scheduled to launch/i.test(combined)) return "Post-launch";
+  if (/campaign (?:is )?live|launched|launch date|scheduled to launch|campaign(?:s)? (?:is|are|going|running)|getting replies|positive repl/i.test(combined)) return "Post-launch";
   if (/launch call/i.test(combined)) return "Launch";
   if (/setup call|setup completed|finalize setup/i.test(combined)) return "Setup";
   if (/onboard/i.test(combined)) return "Onboarding";
   return "Active client";
 }
 
+function isAdminOrPaymentText(value: unknown) {
+  return /inboxlab coaching|latest payment|payment (?:hasn.t|has not|failed|due)|invoice|card or bank|bank issue|declin|past due|overdue|balance|whop|billing/i.test(String(value || ""));
+}
+
+function isProgressText(value: unknown) {
+  const text = String(value || "");
+  if (!text || isAdminOrPaymentText(text)) return false;
+  return /vsl|landing page|campaign|smartlead|positive repl|replies|reply|bookings?|prospect|conversion|convert|sender|warmup|bounce|spam|outreach|research|sales module|client won|closed|lead/i.test(text);
+}
+
 function latestProgressSignal(meetings: any[], heartbeatMessages: any[]) {
-  const hb = heartbeatMessages.find((m) => /vsl|landing page|campaign|smartlead|reply|client|call|launch|module|lead/i.test(String(m.text || "")));
-  const fm = meetings[0];
-  const hbText = hb ? firstUsefulSentence(hb.text, 260) : "";
-  const fmText = fm ? firstUsefulSentence(fm.summary, 320) : "";
-  if (hbText && fmText) return fmText + " Latest Heartbeat: " + hbText;
+  const progress = heartbeatMessages.filter((m) => isProgressText(m?.text));
+  const clientAuthored = progress.find((m) => !/^(Dave Barton|Jimmy Fung|Danyal Mirza|Ilyas Burkutally)$/i.test(String(m?.sender || "")));
+  const hb = clientAuthored || progress[0];
+  const latestMeeting = meetings[0];
+  const hbText = hb ? firstUsefulSentence(hb.text, 320) : "";
+  const fmText = latestMeeting ? firstUsefulSentence(latestMeeting.summary, 360) : "";
+  if (hbText && fmText) return hbText + " Latest call context: " + fmText;
   return hbText || fmText || "No clear progress update was found in the connected context.";
 }
 
@@ -1523,7 +1543,7 @@ function inferCallFocus(stage: string) {
   return "Re-establish the client's goal, current position, blockers and next committed action.";
 }
 
-async function buildClientIntelligence(name: string) {
+async function buildClientIntelligence(name: string, itemId?: number) {
   await ensureOpsTables();
   const [heartbeat, fathom, calendly] = await Promise.all([
     getClientHeartbeatContext(name, 140).catch((err) => ({ found: false, messages: [], error: err instanceof Error ? err.message : "Heartbeat lookup failed" })),
@@ -1540,24 +1560,36 @@ async function buildClientIntelligence(name: string) {
     airtable = ar.rows[0] || null;
   } catch {}
 
+  let dashboardItem: any = null;
+  if (itemId && Number.isFinite(itemId)) {
+    try {
+      const ir = await pool!.query(`SELECT * FROM dashboard_items WHERE id=$1 LIMIT 1`, [itemId]);
+      dashboardItem = ir.rows[0] || null;
+    } catch {}
+  }
+
   const hbMessages = Array.isArray((heartbeat as any).messages) ? (heartbeat as any).messages : [];
   const meetings = Array.isArray((fathom as any).meetings) ? (fathom as any).meetings : [];
   const events = Array.isArray((calendly as any).events) ? (calendly as any).events : [];
   const stage = inferClientStage(meetings, hbMessages);
   const now = Date.now();
   const upcoming = events.filter((e: any) => (Date.parse(e.start_time || "") || 0) >= now).sort((a: any, b: any) => Date.parse(a.start_time) - Date.parse(b.start_time))[0] || null;
-  const recentScheduling = hbMessages.find((m: any) => /book|rebook|reschedul|call|12:|lunch|available|missed|no.?show/i.test(String(m.text || "")));
+  const recentScheduling = hbMessages.find((m: any) => /book(?:ed|ing)?|rebook|reschedul|lunch break|available (?:between|after|at)|missed (?:the )?call|no.?show/i.test(String(m.text || "")) && !isAdminOrPaymentText(m.text));
   const paymentText = String(airtable?.payment_notes || "");
-  const paymentMessages = hbMessages.filter((m: any) => /pay|payment|invoice|card|bank|declin|installment|instalment|balance|whop/i.test(String(m.text || ""))).slice(0, 12);
+  const paymentMessages = hbMessages.filter((m: any) => /pay|payment|invoice|card|bank|declin|installment|instalment|balance|whop|billing/i.test(String(m.text || ""))).slice(0, 12);
 
   let whySpeaking = "";
-  if (upcoming) {
+  if (dashboardItem?.category === "COLLECTION") {
+    whySpeaking = "Collection follow-up. " + firstUsefulSentence(dashboardItem.summary || dashboardItem.title, 260);
+  } else if (dashboardItem?.category === "REFUND") {
+    whySpeaking = "Refund/support follow-up. " + firstUsefulSentence(dashboardItem.summary || dashboardItem.title, 260);
+  } else if (upcoming) {
     whySpeaking = `${upcoming.name || "Client call"}`;
     if (recentScheduling?.text) whySpeaking += `. Recent scheduling context: ${firstUsefulSentence(recentScheduling.text, 220)}`;
   } else if (recentScheduling?.text) {
     whySpeaking = firstUsefulSentence(recentScheduling.text, 280);
   } else {
-    whySpeaking = "No upcoming Calendly booking was found; use the latest client context to establish the reason for contact.";
+    whySpeaking = "No upcoming Calendly booking was found. Use the client’s current progress and latest conversation to establish the purpose of contact.";
   }
 
   const originalGoal = extractGoal(meetings) || "No original goal was reliably extracted from the connected call summaries.";
@@ -1567,7 +1599,7 @@ async function buildClientIntelligence(name: string) {
     : (paymentMessages.length ? "Payment/card history appears in Heartbeat. Review the source messages before raising billing." : "No material payment warning was surfaced from the connected data.");
 
   const recentActivity = [
-    ...hbMessages.slice(0, 14).map((m: any) => ({
+    ...hbMessages.filter((m: any) => !isAdminOrPaymentText(m.text)).slice(0, 14).map((m: any) => ({
       source: "Heartbeat",
       date: m.timestamp || null,
       text: firstUsefulSentence(m.text, 260),
@@ -1612,8 +1644,9 @@ async function buildClientIntelligence(name: string) {
 app.get("/dashboard/api/client-intelligence", requireDashboardAuth, async (req, res) => {
   try {
     const name = typeof req.query.name === "string" ? req.query.name.trim() : "";
+    const itemId = typeof req.query.item_id === "string" ? Number(req.query.item_id) : undefined;
     if (!name) return res.status(400).json({ error: "Client name is required" });
-    res.json(await buildClientIntelligence(name));
+    res.json(await buildClientIntelligence(name, itemId));
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to build client intelligence" });
   }
