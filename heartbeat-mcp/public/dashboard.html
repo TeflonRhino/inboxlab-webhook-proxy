@@ -838,9 +838,25 @@
         var t=String(s||"").replace(/\[([^\]]+)\]\([^\)]+\)/g,"$1").replace(/https?:\/\/\S+/g,"").replace(/[\n\r\t]+/g," ").replace(/\s+/g," ").trim();
         return t.length>120?t.slice(0,117).replace(/[,:;\-\s]+$/,"")+"…":t;
       }
+      function isClientMeeting(m){
+        // EOD client outcomes should map to a Calendly booking from the selected day.
+        // This excludes internal/team Fathom recordings (e.g. Dave + Danyal).
+        return eventInvitees.some(function(x){return meetingMatchesInvitee(m,x)});
+      }
+      function actionBelongsToDave(a){
+        if(!a||!a.description||a.completed)return false;
+        var who=normaliseEod(a.assignee_name||a.assignee||a.owner_name||a.owner||"");
+        var desc=normaliseEod(a.description||"");
+        if(who)return /\bdave\b|\bdavid\b/.test(who);
+        // Fathom does not always expose an assignee. Keep only actions phrased as Dave/team work,
+        // and reject obvious client-owned homework.
+        if(/\bfor dave\b/.test(desc))return false;
+        if(/\bcomplete\b|\battend\b|\breview budget\b|\bquiz\b/.test(desc)&&!/\bsend\b|\bpost\b|\breview smartlead\b|\breassign\b|\bmessage\b/.test(desc))return false;
+        return /\bsend\b|\bpost\b|\bmessage\b|\breassign\b|\breview smartlead\b|\bfollow up\b|\bcheck\b|\bshare\b|\bprovide\b/.test(desc);
+      }
       var work=[];
 
-      fathomMeetings.forEach(function(m){
+      fathomMeetings.filter(isClientMeeting).forEach(function(m){
         var name=meetingPerson(m);
         var outcome=outcomeFromMeeting(m);
         var next=(m.action_items||[]).filter(function(a){return a&&a.description&&!a.completed}).slice(0,2).map(function(a){return cleanAction(a.description)}).filter(Boolean);
@@ -909,7 +925,11 @@
         if(!key){consolidated.push(w);return}
         if(byClient[key]==null){byClient[key]=consolidated.length;consolidated.push(w);return}
         var idx=byClient[key],existing=consolidated[idx],ed=normaliseEod(existing);
-        if(detail&&!ed.includes(normaliseEod(detail)))consolidated[idx]=existing+"; "+detail.charAt(0).toLowerCase()+detail.slice(1);
+        if(detail&&!ed.includes(normaliseEod(detail))){
+          var d=detail.charAt(0).toLowerCase()+detail.slice(1);
+          if(/payment follow-up sent/.test(ed)&&d==="follow-up sent with reschedule link")d="reschedule link also sent";
+          consolidated[idx]=existing+"; "+d;
+        }
       });
       work=consolidated;
 
@@ -925,9 +945,9 @@
         var key=normaliseEod((name||"")+" "+clean);if(carryKeys[key])return;carryKeys[key]=true;
         carry.push((name?name+" — ":"")+clean);
       }
-      fathomMeetings.forEach(function(m){
+      fathomMeetings.filter(isClientMeeting).forEach(function(m){
         var name=meetingPerson(m);
-        (m.action_items||[]).filter(function(a){return a&&a.description&&!a.completed}).slice(0,3).forEach(function(a){addCarry(name,cleanAction(a.description))});
+        (m.action_items||[]).filter(actionBelongsToDave).slice(0,3).forEach(function(a){addCarry(name,cleanAction(a.description))});
       });
       bookingStatuses.forEach(function(row){
         if(row.status==="no_show"||row.status==="possible_no_show"){
